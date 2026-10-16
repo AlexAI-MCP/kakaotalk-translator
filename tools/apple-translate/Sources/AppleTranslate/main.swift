@@ -91,7 +91,8 @@ struct InstallView: View {
   var body: some View {
     Text("Download Korean to translate messages on this Mac.").padding(30)
       .fixedSize()
-      .translationTask(TranslationSession.Configuration(source: source, target: target)) { session in
+      // @concurrent: the session is not Sendable, so Swift 6 requires using it off the main actor.
+      .translationTask(TranslationSession.Configuration(source: source, target: target)) { @concurrent session in
         try? await session.prepareTranslation()
         await finishInstall(source, target)
       }
