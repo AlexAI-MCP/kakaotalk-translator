@@ -43,10 +43,21 @@ printf '%s\n' "Built and linked ~/.local/bin/kakao-apple-translate to $binary"
 
 check="$("$binary" --check)"
 printf 'Language packs: %s\n' "$check"
+fallback='If needed, open System Settings > General > Language & Region > Translation Languages and download Korean.'
 if [[ "$check" == *'"ko-en":"installed"'* && "$check" == *'"en-ko":"installed"'* ]]; then
   printf '%s\n' 'Korean and English translation packs are installed.'
 else
-  printf '%s\n' 'Korean and English translation packs are not fully installed.' 'Open System Settings > General > Language & Region > Translation Languages and download Korean.'
+  printf '%s\n' 'Korean and English translation packs are not fully installed.' 'A macOS window will appear asking to download Korean. Choose Download.'
+  for pair in 'ko en' 'en ko'; do
+    read -r src dst <<<"$pair"
+    [[ "$check" == *"\"$src-$dst\":\"installed\""* ]] && continue
+    result="$("$binary" --install "$src" "$dst" || true)"
+    case "$result" in
+      *'"status":"installed"'*) printf '%s\n' "$src to $dst: installed." ;;
+      *'"status":"supported"'*) printf '%s\n' "$src to $dst: downloading in background (or cancelled). Re-run npm run doctor in a few minutes." "$fallback" ;;
+      *) printf '%s\n' "$src to $dst: unsupported on this Mac. Use another translation engine." ;;
+    esac
+  done
 fi
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;

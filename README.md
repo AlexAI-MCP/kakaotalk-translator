@@ -67,7 +67,7 @@ The optional Apple engine uses the macOS Translation framework through a small l
 npm run setup:apple
 ~~~
 
-Then download Korean under System Settings > General > Language & Region > Translation Languages and restart the viewer. The doctor reports whether the Korean to English and English to Korean languages are installed; a direction whose language is missing stays disabled. No message text leaves the Mac, and no account or subscription is used. It is much faster (about 0.25 s per 12-message batch here, versus about 3 s for a cloud model) but weaker with slang, tone and dropped subjects.
+If Korean is not downloaded yet, setup also shows the macOS download window. You can instead click "Download Korean for on-device translation" under Translation in the viewer, or add Korean under System Settings > General > Language & Region > Translation Languages. The viewer picks up the new language automatically; no restart is needed. The doctor reports whether the Korean to English and English to Korean languages are installed; a direction whose language is missing stays disabled. No message text leaves the Mac, and no account or subscription is used. It is much faster (about 0.25 s per 12-message batch here, versus about 3 s for a cloud model) but weaker with slang, tone and dropped subjects.
 
 ### Cloud CLIs
 
@@ -107,7 +107,7 @@ Use --no-open to prevent automatic browser opening. Stop reading pauses polling;
 - Room missing: the selected CLI/database may not expose that room. This is not proof of universal open-chat support.
 - Read error: check KakaoTalk login and manual Full Disk Access approval, then run the doctor.
 - Translation unavailable: install/sign in to a compatible provider CLI yourself. No credentials belong in this repository.
-- Apple (on-device) disabled: run npm run setup:apple, download Korean under Translation Languages, restart the viewer, then run the doctor.
+- Apple (on-device) disabled: run npm run setup:apple, or click Download Korean in the viewer, then run the doctor. Restart the viewer only after building the helper for the first time.
 - Unknown room names: the local database may have no room title or contact name to use as a fallback, particularly for group chats. The room picker displays the CLI's result; it cannot reconstruct a missing title. This is separate from an unknown chat-type classification. Do not run harvest or UI automation to populate names.
 - Name unavailable: room-scoped nicknames may be missing from the local database. Do not use UI automation to populate them.
 

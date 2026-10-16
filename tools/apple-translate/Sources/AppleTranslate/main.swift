@@ -1,6 +1,8 @@
 // On-device ko<->en translation via Apple's Translation framework.
 // Never writes input or output text to stderr: these are private messages.
+import AppKit
 import Foundation
+import SwiftUI
 import Translation
 
 func fail(_ message: String, _ code: Int32) -> Never {
@@ -61,10 +63,85 @@ if CommandLine.arguments.dropFirst().first == "--check" {
   ])
   exit(0)
 }
-guard CommandLine.arguments.count == 1 else { fail("usage: kakao-apple-translate [--check]", 1) }
+let usage = "usage: kakao-apple-translate [--check | --install <ko|en> <ko|en>]"
+let codes = ["ko": ko, "en": en]
+
+// --install: show Apple's native language download prompt in a small window.
+struct InstallResult: Encodable { let status: String, prompted: Bool }
+
+@MainActor enum Install { static var finished = false }
+@MainActor func finishInstall(_ source: Locale.Language, _ target: Locale.Language) async -> Never {
+  if !Install.finished {
+    Install.finished = true
+    emit(InstallResult(status: label(await LanguageAvailability().status(from: source, to: target)), prompted: true))
+  }
+  exit(0)
+}
+
+@MainActor final class CloseWatcher: NSObject, NSWindowDelegate {
+  let source: Locale.Language, target: Locale.Language
+  init(_ source: Locale.Language, _ target: Locale.Language) { self.source = source; self.target = target }
+  func windowWillClose(_ notification: Notification) {
+    Task { await finishInstall(source, target) }
+  }
+}
+
+struct InstallView: View {
+  let source: Locale.Language, target: Locale.Language
+  var body: some View {
+    Text("Download Korean to translate messages on this Mac.").padding(30)
+      .fixedSize()
+      .translationTask(TranslationSession.Configuration(source: source, target: target)) { session in
+        try? await session.prepareTranslation()
+        await finishInstall(source, target)
+      }
+  }
+}
+
+// Everything in --install runs inside the AppKit event loop. A top-level await before app.run() would
+// resume on the main queue, which AppKit cannot drain, so Apple's prompt would never start.
+@MainActor final class InstallDelegate: NSObject, NSApplicationDelegate {
+  let source: Locale.Language, target: Locale.Language
+  var window: NSWindow?, watcher: CloseWatcher?
+  init(_ source: Locale.Language, _ target: Locale.Language) { self.source = source; self.target = target }
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    Task {
+      switch await LanguageAvailability().status(from: source, to: target) {
+      case .installed: emit(InstallResult(status: "installed", prompted: false)); exit(0)
+      case .supported: break
+      default: emit(InstallResult(status: "unsupported", prompted: false)); exit(3)
+      }
+      let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 440, height: 120), styleMask: [.titled, .closable],
+                            backing: .buffered, defer: false)
+      window.title = "KakaoTalk Translator"
+      window.isReleasedWhenClosed = false
+      watcher = CloseWatcher(source, target)
+      window.delegate = watcher
+      window.contentView = NSHostingView(rootView: InstallView(source: source, target: target))
+      window.center()
+      // Launched in the background by the viewer, so force the window in front of the browser.
+      window.level = .floating
+      window.makeKeyAndOrderFront(nil)
+      window.orderFrontRegardless()
+      NSApp.activate(ignoringOtherApps: true)
+      self.window = window
+    }
+  }
+}
+
+if CommandLine.arguments.dropFirst().first == "--install" {
+  let args = CommandLine.arguments
+  guard args.count == 4, args[2] != args[3], let source = codes[args[2]], let target = codes[args[3]] else { fail(usage, 1) }
+  let app = NSApplication.shared
+  app.setActivationPolicy(.regular)
+  let delegate = InstallDelegate(source, target)
+  app.delegate = delegate
+  app.run()
+  exit(0)
+}
+guard CommandLine.arguments.count == 1 else { fail(usage, 1) }
 
 struct Input: Decodable { let source: String, target: String, texts: [String] }
-let codes = ["ko": ko, "en": en]
 guard let input = try? JSONDecoder().decode(Input.self, from: FileHandle.standardInput.readDataToEndOfFile()),
       let source = codes[input.source], let target = codes[input.target], input.source != input.target
 else { fail("invalid input JSON", 1) }

@@ -11,7 +11,7 @@ for (const [name, flags] of [["claude",["--safe-mode","--no-session-persistence"
   console.log(`${name}: ${support.compatible ? "privacy options available; sign in separately" : support.installed ? "installed but needs an update for privacy options" : "optional, not installed"}`);
 }
 const apple = appleSupport(appleCommand());
-const pack = (s) => s === "installed" ? "installed" : s === "supported" ? "not downloaded (System Settings > General > Language & Region > Translation Languages)" : "unsupported";
+const pack = (s) => s === "installed" ? "installed" : s === "supported" ? "not downloaded; run npm run setup:apple to download, or use the Download button in the viewer" : "unsupported";
 console.log(`Apple Translation: ${apple.installed ? `Korean→English ${pack(apple.pairs["ko-en"])}, English→Korean ${pack(apple.pairs["en-ko"])}` : "optional, not installed; run npm run setup:apple (macOS 26+)"}`);
 if (process.platform === "darwin" && reader) {
   const result = spawnSync(reader,["chats","--limit","1","--json"],{encoding:"utf8",timeout:30000,maxBuffer:1024*1024});
