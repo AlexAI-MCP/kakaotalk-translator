@@ -177,6 +177,7 @@ a { color:inherit; }
       <option value="none">Off — original messages only</option>
       <option value="claude">Claude Code</option>
       <option value="codex">Codex CLI</option>
+      <option value="apple">Apple (on-device)</option>
     </select></div>
     <div class="field"><label for="target">Translate to</label><select id="target"><option value="en">English</option><option value="ko">Korean</option></select></div>
     <p class="help" id="translation-hint">Choose an engine to enable translation.</p>
@@ -218,7 +219,7 @@ a { color:inherit; }
   </div>
 </main>
 </div>
-<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your own signed-in CLI.</span><span>No tracking · No hosted chat storage</span></footer>
+<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your own signed-in CLI or on-device Apple Translation.</span><span>No tracking · No hosted chat storage</span></footer>
 </div>
 <script>
 const $ = function(id) { return document.getElementById(id); };
@@ -276,23 +277,26 @@ function applyState(state) {
   showError(state.lastError);
   const a = state.available || {};
   $("availability").replaceChildren();
-  for (const item of [["kakaocli",a.kakaocli],["Claude Code",a.claudeCompatible],["Codex CLI",a.codexCompatible]]) {
+  const appleUsable = state.target === "ko" ? a.appleEnKo : a.appleKoEn;
+  for (const item of [["kakaocli",a.kakaocli],["Claude Code",a.claudeCompatible],["Codex CLI",a.codexCompatible],["Apple Translation",appleUsable,a.apple ? "Language needed" : ""]]) {
     const row = document.createElement("div"); row.className = "capability";
     const label = document.createElement("span"); label.textContent = item[0];
-    const value = document.createElement("b"); value.textContent = item[1] ? "Detected" : "Not available";
+    const value = document.createElement("b"); value.textContent = item[1] ? "Detected" : item[2] || "Not available";
     row.append(label,value); $("availability").appendChild(row);
   }
   const sampleOption = $("agent").querySelector('option[value="demo"]');
   if (state.demo && !sampleOption) { const opt = document.createElement("option"); opt.value="demo";opt.textContent="Sample translations (demo)";$("agent").appendChild(opt); }
   $("agent").querySelector('option[value="claude"]').disabled = !a.claudeCompatible;
   $("agent").querySelector('option[value="codex"]').disabled = !a.codexCompatible;
+  $("agent").querySelector('option[value="apple"]').disabled = !appleUsable;
   if (!initialized) {
     $("chat").value = state.chat; selectedChatId = state.chatId; $("agent").value=state.agent; $("target").value=state.target; $("interval").value=String(state.intervalSec); initialized=true;
     $("toggle").disabled = !running && !state.demo && !state.chat;
   }
   $("translation-hint").textContent = state.agent === "none" ? "Original messages only. No text is sent to an AI provider."
     : state.agent === "demo" ? "Fictional messages and prewritten sample translations. No AI calls."
-    : (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ") + "Sends text to your signed-in provider.";
+    : (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ")
+      + (state.agent === "apple" ? "On-device Apple Translation. Message text stays on this Mac." : "Sends text to your signed-in provider.");
   $("session-note").textContent = state.demo ? "Demo mode does not read KakaoTalk or save chat preferences." : "Preferences stay on this computer. Messages stay in memory.";
   if (state.demo) {
     $("empty").querySelector("h3").textContent="Try a sample conversation.";
@@ -327,7 +331,10 @@ $("toggle").onclick = async function() {
 };
 $("chat").oninput = function() { selectedChatId=null;$("toggle").disabled=!running&&!$("chat").value.trim(); };
 $("chat").onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
-for (const id of ["agent","target","interval"]) $(id).onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
+for (const id of ["agent","target","interval"]) $(id).onchange = async function() {
+  try { await saveConfig();await tick(); }
+  catch(e) { if (lastState) { $("agent").value=lastState.agent;$("target").value=lastState.target; } showError(e.message); }
+};
 function closeChatPicker() {
   $("chats").hidden=true;
   $("browse").textContent="Browse your chats ↗";

@@ -6,11 +6,11 @@ This is an unofficial project, not affiliated with Kakao. Use only conversations
 
 ## Does sharing this link automatically connect an LLM?
 
-No. This repository provides code, not a hosted service or an AI account. Each user must run it on their own Mac, sign in to their own KakaoTalk, and install/sign in to a supported Claude Code or Codex CLI themselves. The viewer detects compatible installed CLIs, but translation stays off until the user selects an engine. A ChatGPT/Claude browser login alone is not a CLI login.
+No. This repository provides code, not a hosted service or an AI account. Each user must run it on their own Mac, sign in to their own KakaoTalk, and install/sign in to a supported Claude Code or Codex CLI themselves, or build the optional on-device Apple Translation helper. The viewer detects compatible installed engines, but translation stays off until the user selects one. A ChatGPT/Claude browser login alone is not a CLI login.
 
 If using a coding assistant, paste the repository link together with this setup request:
 
-> Read the README and help me set up KakaoTalk Translator on my own Mac. Use my local KakaoTalk account and let me choose a room. Use only my existing, already-authenticated Claude Code or Codex CLI; if none is available, pause and tell me what I need to install or sign in to myself. Never send KakaoTalk messages or use KakaoTalk UI automation. Never print or copy messages, credentials or database files. Leave translation off until I choose the engine. Pause for any administrator password or permission approval so I can complete it myself.
+> Read the README and help me set up KakaoTalk Translator on my own Mac. Use my local KakaoTalk account and let me choose a room. Use only my existing, already-authenticated Claude Code or Codex CLI, or the on-device Apple Translation helper on macOS 26 or later; if none is available, pause and tell me what I need to install or sign in to myself. Never send KakaoTalk messages or use KakaoTalk UI automation. Never print or copy messages, credentials or database files. Leave translation off until I choose the engine. Pause for any administrator password or permission approval so I can complete it myself.
 
 ## Try the demo
 
@@ -51,7 +51,7 @@ Live reading has been checked on macOS 26.5 with Node 22.22.3 and Command Line T
 
 ## Translation
 
-Translation is off by default. Choose an installed, already-authenticated Claude Code or Codex CLI, then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
+Translation is off by default. Choose an installed, already-authenticated Claude Code or Codex CLI, or Apple (on-device), then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
 
 - English translates messages containing Korean characters.
 - Korean translates letter-containing messages without Korean characters.
@@ -59,7 +59,19 @@ Translation is off by default. Choose an installed, already-authenticated Claude
 - Existing messages can be queued when the language or engine changes. Turning translation off does not erase completed translations.
 - Claude uses safe mode, disabled tools/hooks, strict MCP configuration and non-persistent sessions. Codex uses ephemeral sessions, disabled hooks and a read-only sandbox. Incompatible CLI versions are disabled.
 
-Enabling translation sends selected message text to the provider authenticated in your CLI and can consume subscription usage. Provider-side retention policies still apply. Claude translation has been exercised on the development Mac. Codex CLI flag support has been checked, but its provider translation has not been end-to-end verified here.
+### Apple (on-device)
+
+The optional Apple engine uses the macOS Translation framework through a small local helper. It requires macOS 26 or later and Swift Command Line Tools.
+
+~~~sh
+npm run setup:apple
+~~~
+
+Then download Korean under System Settings > General > Language & Region > Translation Languages and restart the viewer. The doctor reports whether the Korean to English and English to Korean languages are installed; a direction whose language is missing stays disabled. No message text leaves the Mac, and no account or subscription is used. It is much faster (about 0.25 s per 12-message batch here, versus about 3 s for a cloud model) but weaker with slang, tone and dropped subjects.
+
+### Cloud CLIs
+
+Enabling Claude or Codex translation sends selected message text to the provider authenticated in your CLI and can consume subscription usage. Provider-side retention policies still apply. Claude translation has been exercised on the development Mac. Codex CLI flag support has been checked, but its provider translation has not been end-to-end verified here.
 
 ## Privacy and local configuration
 
@@ -75,9 +87,10 @@ settings.example.json is a non-personal template. Local settings, environment fi
 |---|---|---|
 | KAKAO_LIVE_PORT | 8777 | Local HTTP port |
 | KAKAO_LIVE_CHAT | Empty | Initial room name or unique substring |
-| KAKAO_LIVE_AGENT | none | none, claude or codex |
+| KAKAO_LIVE_AGENT | none | none, claude, codex or apple |
 | KAKAO_LIVE_TARGET | en | en or ko |
 | KAKAOCLI | kakaocli | Executable name or path |
+| KAKAO_LIVE_APPLE_TRANSLATE | kakao-apple-translate | Apple Translation helper name or path |
 | KAKAO_LIVE_CLAUDE_MODEL | Unset | Optional, explicitly selected Claude model |
 | KAKAO_LIVE_SETTINGS_PATH | settings.local.json | Local preference file |
 
@@ -94,6 +107,7 @@ Use --no-open to prevent automatic browser opening. Stop reading pauses polling;
 - Room missing: the selected CLI/database may not expose that room. This is not proof of universal open-chat support.
 - Read error: check KakaoTalk login and manual Full Disk Access approval, then run the doctor.
 - Translation unavailable: install/sign in to a compatible provider CLI yourself. No credentials belong in this repository.
+- Apple (on-device) disabled: run npm run setup:apple, download Korean under Translation Languages, restart the viewer, then run the doctor.
 - Unknown room names: the local database may have no room title or contact name to use as a fallback, particularly for group chats. The room picker displays the CLI's result; it cannot reconstruct a missing title. This is separate from an unknown chat-type classification. Do not run harvest or UI automation to populate names.
 - Name unavailable: room-scoped nicknames may be missing from the local database. Do not use UI automation to populate them.
 

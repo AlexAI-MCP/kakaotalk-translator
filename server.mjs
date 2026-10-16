@@ -1,5 +1,5 @@
 // KakaoTalk Translator: polls a local chat via kakaocli, optionally translates new messages with an
-// agent CLI, and serves a localhost-only browser page. Zero dependencies (Node >= 18).
+// agent CLI or on-device Apple Translation, and serves a localhost-only browser page. Zero dependencies (Node >= 18).
 //   node server.mjs [--demo] [--no-open]
 import http from "node:http";
 import fs from "node:fs";
@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { parseCliJson, parseMessages, needsTranslation as translationNeeded } from "./lib/messages.mjs";
-import { findCommand, cliSupport, readPreferences, cleanPreferences } from "./lib/runtime.mjs";
+import { findCommand, cliSupport, readPreferences, cleanPreferences, appleCommand, appleSupport, appleReady } from "./lib/runtime.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.KAKAO_LIVE_PORT || 8777);
@@ -28,6 +28,8 @@ const cli = {
   claude: cliSupport("claude", ["--safe-mode", "--no-session-persistence", "--tools", "--strict-mcp-config"]),
   codex: cliSupport("codex", ["--ephemeral", "--disable", "--sandbox"]),
 };
+const APPLE = appleCommand();
+const apple = appleSupport(APPLE);
 
 const state = {
   running: false,
@@ -52,7 +54,8 @@ let streamId = randomUUID();
 // ---------------------------------------------------------------- helpers
 function availability() {
   return { claude: cli.claude.installed, codex: cli.codex.installed, kakaocli: DEMO || cli.kakaocli,
-    claudeCompatible: cli.claude.compatible, codexCompatible: cli.codex.compatible, platform: process.platform };
+    claudeCompatible: cli.claude.compatible, codexCompatible: cli.codex.compatible, platform: process.platform,
+    apple: apple.installed, appleKoEn: appleReady(apple, "en"), appleEnKo: appleReady(apple, "ko") };
 }
 function needsTranslation(text) {
   return translationNeeded(text, state.target);
@@ -208,8 +211,11 @@ function extractArray(output, expected) {
     return null;
   }
 }
-async function callAgent(prompt) {
+async function callAgent(texts) {
   const a = state.agent;
+  // On-device helper: structured JSON on stdin, no prompt, never leaves this Mac.
+  if (a === "apple") return runCapture(APPLE, [], { input: JSON.stringify({ source: state.target === "en" ? "ko" : "en", target: state.target, texts }), timeoutMs: 30_000 });
+  const prompt = buildPrompt(texts);
   if (a === "claude") {
     const args = ["-p", "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config",
       "--settings", '{"disableAllHooks":true}'];
@@ -230,15 +236,17 @@ async function translatePending() {
   try {
     const r = DEMO && agent === "demo"
       ? { code: 0, out: JSON.stringify(pending.map((m) => DEMO_LINES.find((line) => line[1] === m.text)?.[2] ?? m.text)) }
-      : await callAgent(buildPrompt(pending.map((m) => m.text.slice(0, 2000))));
+      : await callAgent(pending.map((m) => m.text.slice(0, 2000)));
     if (generation !== translationGeneration) return;
     const arr = r && r.code === 0 ? extractArray(r.out, pending.length) : null;
     pending.forEach((m, i) => {
       if (arr) { m.translation = arr[i]; m.tstate = "done"; } else m.tstate = "error";
       m.seq = ++seq; // re-announce so the browser picks up the translation
     });
-    // Never echo the CLI response: it can contain the original chat text.
-    translationError = arr ? null : `Translation failed (${agent}): ${r?.code === 0 ? "unexpected response format" : `CLI exit ${r?.code ?? "timeout"}`}. Check CLI sign-in or update it.`;
+    // Never echo the CLI/helper response: it can contain the original chat text.
+    const hint = agent !== "apple" ? "Check CLI sign-in or update it." : r?.code === 2
+      ? "Install the Korean translation language in System Settings > General > Language & Region > Translation Languages." : "Run npm run doctor.";
+    translationError = arr ? null : `Translation failed (${agent}): ${r?.code === 0 ? "unexpected response format" : `${agent === "apple" ? "helper" : "CLI"} exit ${r?.code ?? "timeout"}`}. ${hint}`;
   } finally {
     state.translating = false;
     if (generation !== translationGeneration && state.running) void translatePending();
@@ -274,7 +282,7 @@ function readBody(req) {
     req.on("end", () => { try { resolve(JSON.parse(data || "{}")); } catch { resolve({}); } });
   });
 }
-const AGENT_RE = /^(claude|codex|none|demo)$/;
+const AGENT_RE = /^(claude|codex|apple|none|demo)$/;
 const server = http.createServer(async (req, res) => {
   // DNS-rebinding / cross-site guard: only our own localhost origin may talk to this server.
   const host = String(req.headers.host || "");
@@ -312,6 +320,15 @@ const server = http.createServer(async (req, res) => {
     if (b.agent === "demo" && !DEMO) return send(res, 400, { error: "Sample translations are only available in demo mode." });
     if (b.agent === "claude" && !cli.claude.compatible) return send(res, 400, { error: "Install/update Claude Code and sign in. Safe-mode and no-session-persistence options are required." });
     if (b.agent === "codex" && !cli.codex.compatible) return send(res, 400, { error: "Install/update Codex CLI and sign in. Ephemeral sessions are required." });
+    const nextAgent = typeof b.agent === "string" && AGENT_RE.test(b.agent) ? b.agent : state.agent;
+    const nextTarget = b.target === "ko" || b.target === "en" ? b.target : state.target;
+    if (nextAgent === "apple" && !apple.installed) return send(res, 400, { error: "Apple Translation helper is missing. Run npm run setup:apple and restart the viewer." });
+    if (nextAgent === "apple" && !appleReady(apple, nextTarget)) {
+      const direction = nextTarget === "en" ? "Korean to English" : "English to Korean";
+      return send(res, 400, { error: apple.pairs[nextTarget === "en" ? "ko-en" : "en-ko"] === "supported"
+        ? `Apple Translation for ${direction} is not downloaded. Install the Korean translation language in System Settings > General > Language & Region > Translation Languages, then restart the viewer.`
+        : `Apple Translation does not support ${direction} on this Mac. Run npm run doctor.` });
+    }
     if (typeof b.chat === "string" && b.chat.trim() && b.chat.length <= 100) {
       if (b.chat.trim() !== state.chat) { state.chat = b.chat.trim(); state.chatId = null; }
     }
