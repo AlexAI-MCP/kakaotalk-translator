@@ -105,6 +105,8 @@ input::placeholder { color:var(--muted); }
 .tr { padding:12px 0 0 13px; margin-top:13px; border-left:2px solid var(--accent); }
 .tr-label { color:var(--accent); display:block; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-bottom:5px; }
 .translation-text { font-size:14px; }
+.text a,.translation-text a { text-decoration:underline; text-underline-offset:2px; }
+.text a:hover,.translation-text a:hover { color:var(--accent); }
 .tr.pending,.tr.error { color:var(--muted); }
 .tr.error { border-color:var(--error); }
 .tr.error .tr-label { color:var(--error); }
@@ -270,6 +272,31 @@ function renderPhotos(el, message) {
   }
   gallery.hidden = !photos.length;
 }
+// Split chat text into plain and link parts. Only http(s) and www. URLs; spaces or non-ASCII (e.g. Korean
+// written right after a link) end the URL, and trailing punctuation or an unmatched ")" is left as text.
+function linkParts(text) {
+  const parts = []; let last = 0;
+  for (const m of String(text).matchAll(/\b(?:https?:\/\/|www\.)[^\s<>"'`\u0080-\uffff]+/gi)) {
+    let url = m[0];
+    while (/[.,!?;:'"\]]$/.test(url) || (url.endsWith(")") && url.split(")").length > url.split("(").length)) url = url.slice(0, -1);
+    let href = null;
+    try { const u = new URL(/^www\./i.test(url) ? "https://" + url : url); if (u.protocol === "http:" || u.protocol === "https:") href = u.href; } catch {}
+    if (!href) continue;
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) });
+    parts.push({ text: url, href });
+    last = m.index + url.length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+function setLinkedText(el, text) {
+  el.replaceChildren(...linkParts(text).map((part) => {
+    if (!part.href) return document.createTextNode(part.text);
+    const a = document.createElement("a"); a.href = part.href; a.textContent = part.text;
+    a.target = "_blank"; a.rel = "noopener noreferrer";
+    return a;
+  }));
+}
 function render(message) {
   let el = nodes.get(message.id);
   if (!el) {
@@ -281,7 +308,7 @@ function render(message) {
   el.querySelector(".author").textContent = message.author;
   el.querySelector(".time").textContent = fmtTime(message.sentAt);
   if (message.sentAt) el.querySelector(".time").dateTime = message.sentAt;
-  el.querySelector(".text").textContent = message.text;
+  setLinkedText(el.querySelector(".text"), message.text);
   renderPhotos(el, message);
   const tr = el.querySelector(".tr");
   tr.hidden = message.tstate === "skip";
@@ -290,7 +317,7 @@ function render(message) {
   tr.querySelector(".tr-label").textContent = message.tstate === "done"
     ? language + (message.truncated ? " · first 2,000 characters" : "")
     : message.tstate === "pending" ? "Translation queued" : "Translation unavailable";
-  tr.querySelector(".translation-text").textContent = message.tstate === "done" ? message.translation : message.tstate === "pending" ? "Translating…" : "Check your engine and sign-in status.";
+  setLinkedText(tr.querySelector(".translation-text"), message.tstate === "done" ? message.translation : message.tstate === "pending" ? "Translating…" : "Check your engine and sign-in status.");
 }
 function applyState(state) {
   lastState = state; running = state.running;
