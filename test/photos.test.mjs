@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { photoUrl, parsePhotos, fetchPhoto } from "../lib/photos.mjs";
+import { photoUrl, parsePhotos, photoQueries, fetchPhoto } from "../lib/photos.mjs";
 
 const source = "https://talk.kakaocdn.net/fictional/photo.jpg";
 const thumbnail = "https://talk.kakaocdn.net/fictional/thumbnail.jpg";
@@ -54,4 +54,18 @@ test("expired responses and oversized declared or streamed images are rejected",
   let called = false;
   await assert.rejects(fetchPhoto("https://localhost/image", async () => { called = true; }));
   assert.equal(called, false);
+});
+
+test("photo queries stay below SQLite's expression depth limit for busy rooms", () => {
+  const rows = Array.from({ length: 1200 }, (_, i) => ({ chatId: "9007199254740993", logId: "9007199254" + String(741000 + i) }));
+  rows.push({ chatId: "9007199254740993", logId: "9007199254741000" }, { chatId: "x", logId: "1" }, { chatId: "7", logId: "1 OR 1=1" });
+  const queries = photoQueries(rows);
+  assert.equal(queries.length, 3);
+  for (const sql of queries) {
+    assert.doesNotMatch(sql, / OR /);
+    assert.match(sql, /^SELECT chatId,logId,attachment FROM NTChatMessage WHERE type IN \(2,27\) AND chatId=9007199254740993 AND logId IN \([\d,]+\)$/);
+  }
+  const ids = queries.flatMap((sql) => sql.match(/IN \(([\d,]+)\)$/)[1].split(","));
+  assert.equal(ids.length, 1200, "each message is queried once");
+  assert.deepEqual(photoQueries([]), []);
 });

@@ -21,7 +21,7 @@ if (args[0] === "messages") console.log(JSON.stringify([
   { chat_id: "9007199254740993", id: "9007199254740997", text: "Album", sender: "Sample", timestamp: "2026-01-01T00:00:01Z" }
 ]));
 else if (args[0] === "query" && args[1].includes("attachment")) {
-  if (!args[1].includes("chatId=9007199254740993 AND logId=9007199254740995")) process.exit(1);
+  if (!args[1].includes("chatId=9007199254740993 AND logId IN (9007199254740995,9007199254740997)")) process.exit(1);
   console.log(JSON.stringify([
     ["9007199254740993", "9007199254740995", JSON.stringify({ url: source+"original.jpg", thumbnailUrl: source+"preview.jpg" })],
     ["9007199254740993", "9007199254740997", JSON.stringify({ imageUrls: [source+"second.jpg", source+"expired.jpg"] })]

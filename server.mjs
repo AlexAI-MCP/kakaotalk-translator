@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { parseCliJson, parseMessages, needsTranslation as translationNeeded } from "./lib/messages.mjs";
 import { findCommand, cliSupport, readPreferences, cleanPreferences } from "./lib/runtime.mjs";
 import { createChatNameTranslator } from "./lib/chat-names.mjs";
-import { parsePhotos, fetchPhoto } from "./lib/photos.mjs";
+import { parsePhotos, photoQueries, fetchPhoto } from "./lib/photos.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.KAKAO_LIVE_PORT || 8777);
@@ -147,18 +147,16 @@ async function resolveAuthors(rows) {
   }
 }
 async function resolvePhotos(rows) {
-  const pending = rows.filter((m) => /^\d+$/.test(String(m.chatId)) && /^\d+$/.test(String(m.logId)) &&
-    !messages.has(`${m.chatId}:${m.logId}`));
-  if (!pending.length) return;
-  const pairs = pending.map((m) => `(chatId=${m.chatId} AND logId=${m.logId})`).join(" OR ");
-  const result = await runCapture(KAKAOCLI, ["query",
-    `SELECT chatId,logId,attachment FROM NTChatMessage WHERE type IN (2,27) AND (${pairs})`]);
-  if (result.code !== 0) return;
-  try {
-    const attachments = new Map(parseCliJson(result.out).map((row) =>
-      [`${row[0]}:${row[1]}`, parsePhotos(row[2])]));
-    for (const m of pending) m.photos = attachments.get(`${m.chatId}:${m.logId}`) || [];
-  } catch { /* Text remains readable when attachment metadata is unsupported. */ }
+  const pending = rows.filter((m) => !messages.has(`${m.chatId}:${m.logId}`));
+  const attachments = new Map();
+  for (const sql of photoQueries(pending)) {
+    const result = await runCapture(KAKAOCLI, ["query", sql]);
+    if (result.code !== 0) continue;
+    try {
+      for (const row of parseCliJson(result.out)) attachments.set(`${row[0]}:${row[1]}`, parsePhotos(row[2]));
+    } catch { /* Text remains readable when attachment metadata is unsupported. */ }
+  }
+  for (const m of pending) m.photos = attachments.get(`${m.chatId}:${m.logId}`) || [];
 }
 function addMessage(m) {
   const key = m.logId != null ? `${m.chatId}:${m.logId}` : `${m.author}|${m.sentAt}|${m.text}`;
