@@ -36,5 +36,6 @@ test("translation output must match the batch shape",() => {
 test("preferences discard extra fields and preserve only configuration",() => {
   const prefs=cleanPreferences({chat:"  Sample  ",chatId:"999999999999999999",agent:"claude",target:"en",intervalSec:100,extra:"not persisted"});
   assert.equal(prefs.chat,"Sample");assert.equal(prefs.chatId,"999999999999999999");assert.equal(prefs.intervalSec,5);assert.equal(prefs.extra,undefined);
+  assert.equal(cleanPreferences({agent:"apple"}).agent,"apple");assert.equal(cleanPreferences({agent:"apple; rm"}).agent,"none");
   assert.equal(cleanPreferences({chatId:"1); DROP",agent:"other"}).chatId,null);assert.equal(cleanPreferences().agent,"none");assert.equal(cleanPreferences().chat,"");
 });

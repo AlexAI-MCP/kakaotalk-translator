@@ -1,16 +1,16 @@
 # KakaoTalk Translator
 
-A local, read-only KakaoTalk conversation viewer with optional Korean–English translation through a CLI or an OpenAI-compatible API. English interface, Swiss-inspired typography and grid, and Light, Dark and System themes. The controls and status panels stay fixed; only the conversation pane scrolls. Small screens use a Controls drawer. API connections and model selection have a dedicated settings page.
+A local, read-only KakaoTalk conversation viewer with optional Korean–English translation through a CLI, an OpenAI-compatible API, or on-device Apple Translation. English interface, Swiss-inspired typography and grid, and Light, Dark and System themes. The controls and status panels stay fixed; only the conversation pane scrolls. Small screens use a Controls drawer. API connections and model selection have a dedicated settings page.
 
 This is an unofficial project, not affiliated with Kakao. Use only conversations you are authorized to access. Respect participant privacy and the applicable service terms.
 
 ## Does sharing this link automatically connect an LLM?
 
-No. This repository provides code, not a hosted service or an AI account. Each user must run it on their own Mac and sign in to their own KakaoTalk. For translation, configure a local or hosted compatible API, or install/sign in to a supported Claude Code or Codex CLI. Translation stays off until the user selects an engine. A ChatGPT/Claude browser login alone is not a CLI login or an API key.
+No. This repository provides code, not a hosted service or an AI account. Each user must run it on their own Mac and sign in to their own KakaoTalk. For translation, configure a local or hosted compatible API, install/sign in to a supported Claude Code or Codex CLI, or build the optional on-device Apple Translation helper. Translation stays off until the user selects an engine. A ChatGPT/Claude browser login alone is not a CLI login or an API key.
 
 If using a coding assistant, paste the repository link together with this setup request:
 
-> Read the README and help me set up KakaoTalk Translator on my own Mac. Use my local KakaoTalk account and let me choose a room. Use only my existing, already-authenticated Claude Code or Codex CLI; if none is available, pause and tell me what I need to install or sign in to myself. Never send KakaoTalk messages or use KakaoTalk UI automation. Never print or copy messages, credentials or database files. Leave translation off until I choose the engine. Pause for any administrator password or permission approval so I can complete it myself.
+> Read the README and help me set up KakaoTalk Translator on my own Mac. Use my local KakaoTalk account and let me choose a room. Use only my existing, already-authenticated Claude Code or Codex CLI, a configured compatible API, or the on-device Apple Translation helper on macOS 26 or later; if none is available, pause and tell me what I need to install or sign in to myself. Never send KakaoTalk messages or use KakaoTalk UI automation. Never print or copy messages, credentials or database files. Leave translation off until I choose the engine. Pause for any administrator password or permission approval so I can complete it myself.
 
 ## Try the demo
 
@@ -55,13 +55,25 @@ Photo posts, including albums, show thumbnails when the local database contains 
 
 ## Translation
 
-Translation is off by default. Choose a configured API or an installed, already-authenticated Claude Code or Codex CLI, then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
+Translation is off by default. Choose a configured API or an installed, already-authenticated Claude Code or Codex CLI, or Apple (on-device), then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
 
 - English translates messages containing Korean characters.
 - Korean translates letter-containing messages without Korean characters.
 - Batches contain up to 12 messages. Each source is limited to 2,000 characters for translation; the UI labels truncated inputs.
 - Existing messages can be queued when the language or engine changes. Turning translation off does not erase completed translations.
 - Claude uses safe mode, disabled tools/hooks, strict MCP configuration and non-persistent sessions. Codex uses ephemeral sessions, disabled hooks and a read-only sandbox. Incompatible CLI versions are disabled.
+
+### Apple (on-device)
+
+The optional Apple engine uses the macOS Translation framework through a small local helper. It requires macOS 26 or later and Swift Command Line Tools.
+
+~~~sh
+npm run setup:apple
+~~~
+
+If Korean is not downloaded yet, setup also shows the macOS download window. You can instead click "Download Korean for on-device translation" under Translation in the viewer, or add Korean under System Settings > General > Language & Region > Translation Languages. The viewer picks up the new language automatically; no restart is needed. The doctor reports whether the Korean to English and English to Korean languages are installed; a direction whose language is missing stays disabled. No message text leaves the Mac, and no account or subscription is used. It is much faster (about 0.25 s per 12-message batch here, versus about 3 s for a cloud model) but weaker with slang, tone and dropped subjects.
+
+### Cloud CLIs
 
 Enabling translation sends selected message text to your configured API or the provider authenticated in your CLI and can consume API or subscription usage. Provider-side retention policies still apply. Claude translation has been exercised on the development Mac. Codex CLI flag support has been checked, but its provider translation has not been end-to-end verified here.
 
@@ -169,9 +181,10 @@ settings.example.json is a non-personal template. Local settings, environment fi
 |---|---|---|
 | KAKAO_LIVE_PORT | 8777 | Local HTTP port |
 | KAKAO_LIVE_CHAT | Empty | Initial room name or unique substring |
-| KAKAO_LIVE_AGENT | none | none, claude, codex or api |
+| KAKAO_LIVE_AGENT | none | none, claude, codex, apple or api |
 | KAKAO_LIVE_TARGET | en | en or ko |
 | KAKAOCLI | kakaocli | Executable name or path |
+| KAKAO_LIVE_APPLE_TRANSLATE | kakao-apple-translate | Apple Translation helper name or path |
 | KAKAO_LIVE_CLAUDE_MODEL | Unset | Optional, explicitly selected Claude model |
 | KAKAO_LIVE_SETTINGS_PATH | settings.local.json | Local preference file |
 | KAKAO_LIVE_API_SETTINGS_PATH | api-provider.local.json | Private API connection and key file |
@@ -193,6 +206,7 @@ The server writes structured diagnostics to its terminal: operation, duration, e
 - Read error: check KakaoTalk login and manual Full Disk Access approval, then run the doctor.
 - Chat browsing times out or reports “file is not a database”: the pinned reader can time out while detecting newer account IDs. After installing the reader, run `npm run repair:kakaocli`, then restart the viewer. This builds a separate reader with parallel account discovery and a validated local cache, adapted from [upstream PR #20](https://github.com/silver-flight-group/kakaocli/pull/20). The first discovery can take longer; subsequent reads use the cache. The cache lives in `~/.kakaocli/userid.json` with owner-only permissions and contains account metadata, not passwords or message text.
 - Translation unavailable: install/sign in to a compatible provider CLI yourself. No credentials belong in this repository.
+- Apple (on-device) disabled: run npm run setup:apple, or click Download Korean in the viewer, then run the doctor. Restart the viewer only after building the helper for the first time.
 - Unknown room names: run `npm run repair:kakaocli`, then restart the viewer and browse your chats again. The repaired reader uses the stored room title, open-chat link title, direct-contact name, then up to three participant names from the room's local member list. Participant names are scoped to the room and may differ from a custom title shown in KakaoTalk. If none are available, it displays "Unnamed chat". This is separate from an unknown chat-type classification. Do not run harvest or UI automation to populate names.
 - English room labels: choose your translation engine and browse your chats. Korean names appear immediately; English translations load beside them as `한국어 이름 (English Name)`, including in the selected room heading. Room names are sent to the selected provider and labels are cached in memory until restart. Original names and room IDs remain the selection values. Translation off keeps the original names only; failed translations do not prevent reading.
 - Name unavailable: room-scoped nicknames may be missing from the local database. Do not use UI automation to populate them.

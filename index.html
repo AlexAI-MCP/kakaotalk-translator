@@ -70,6 +70,11 @@ input::placeholder { color:var(--muted); }
 .theme-options button:last-child { border-right:0; }
 .theme-options button[aria-pressed="true"] { color:var(--bg); background:var(--fg); }
 .action-section { padding-top:12px; margin-top:auto; flex-shrink:0; }
+.apple-setup { margin-top:10px; font-size:11px; line-height:1.55; color:var(--muted); }
+.apple-setup p { margin:0 0 8px; }
+.apple-setup .secondary { width:100%; text-align:left; }
+.link-button { display:block; margin-top:6px; padding:0; border:0; background:none; color:var(--muted); font-size:11px; text-decoration:underline; text-underline-offset:2px; }
+.link-button:hover { color:var(--fg); }
 #availability { display:grid; gap:4px; margin-top:10px; }
 .capability { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); }
 .capability b { font-weight:400; }
@@ -185,10 +190,14 @@ a { color:inherit; }
       <option value="none">Off — original messages only</option>
       <option value="claude">Claude Code</option>
       <option value="codex">Codex CLI</option>
+      <option value="apple">Apple (on-device)</option>
       <option value="api">OpenAI-compatible API</option>
     </select></div>
     <div class="field"><label for="target">Translate to</label><select id="target"><option value="en">English</option><option value="ko">Korean</option></select></div>
     <p class="help" id="translation-hint">Choose an engine to enable translation.</p>
+    <div id="apple-setup" class="apple-setup" role="status" hidden><p id="apple-setup-text"></p>
+      <button id="apple-install" class="secondary" type="button">Download Korean for on-device translation</button>
+      <button id="apple-settings" class="link-button" type="button">Open Language &amp; Region settings</button></div>
   </section>
   <section class="control-section">
     <div class="section-heading"><span class="section-index">03</span><h2>Appearance</h2></div>
@@ -227,7 +236,7 @@ a { color:inherit; }
   </div>
 </main>
 </div>
-<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your selected CLI or API.</span><span>No tracking · No hosted chat storage</span></footer>
+<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your selected CLI, API, or on-device Apple Translation.</span><span>No tracking · No hosted chat storage</span></footer>
 </div>
 <script>
 const $ = function(id) { return document.getElementById(id); };
@@ -336,16 +345,26 @@ function applyState(state) {
   showError(state.lastError || chatPickerError);
   const a = state.available || {};
   $("availability").replaceChildren();
-  for (const item of [["kakaocli",a.kakaocli],["Claude Code",a.claudeCompatible],["Codex CLI",a.codexCompatible]]) {
+  const appleUsable = state.target === "ko" ? a.appleEnKo : a.appleKoEn;
+  for (const item of [["kakaocli",a.kakaocli],["Claude Code",a.claudeCompatible],["Codex CLI",a.codexCompatible],["Apple Translation",appleUsable,a.apple ? "Language needed" : ""]]) {
     const row = document.createElement("div"); row.className = "capability";
     const label = document.createElement("span"); label.textContent = item[0];
-    const value = document.createElement("b"); value.textContent = item[1] ? "Detected" : "Not available";
+    const value = document.createElement("b"); value.textContent = item[1] ? "Detected" : item[2] || "Not available";
     row.append(label,value); $("availability").appendChild(row);
   }
   const sampleOption = $("agent").querySelector('option[value="demo"]');
   if (state.demo && !sampleOption) { const opt = document.createElement("option"); opt.value="demo";opt.textContent="Sample translations (demo)";$("agent").appendChild(opt); }
   $("agent").querySelector('option[value="claude"]').disabled = !a.claudeCompatible;
   $("agent").querySelector('option[value="codex"]').disabled = !a.codexCompatible;
+  $("agent").querySelector('option[value="apple"]').disabled = !appleUsable;
+  // Helper present but language missing: offer Apple's download prompt; helper missing on a Mac: point at setup.
+  const prompting = a.appleInstall === "prompting";
+  $("apple-setup").hidden = appleUsable || !(a.apple || a.platform === "darwin");
+  $("apple-setup-text").textContent = !a.apple ? "Apple on-device translation: run npm run setup:apple (macOS 26+)."
+    : prompting ? "Follow the macOS download window. Downloads can continue in the background; this updates automatically."
+    : "Apple (on-device) needs the Korean language for " + (state.target === "ko" ? "English to Korean." : "Korean to English.");
+  $("apple-install").hidden = $("apple-settings").hidden = !a.apple;
+  $("apple-install").disabled = prompting;
   $("agent").querySelector('option[value="api"]').disabled = !a.apiConfigured;
   if (!initialized) {
     $("chat").value = state.chat; selectedChatId = state.chatId; $("agent").value=state.agent; $("target").value=state.target; $("interval").value=String(state.intervalSec); initialized=true;
@@ -354,7 +373,8 @@ function applyState(state) {
   $("translation-hint").textContent = state.agent === "none" ? "Original messages only. No text is sent to an AI provider."
     : state.agent === "demo" ? "Fictional messages and prewritten sample translations. No AI calls."
     : state.agent === "api" ? (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ") + "Sends text to your configured API · " + a.apiModel
-    : (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ") + "Sends text to your signed-in provider.";
+    : (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ")
+      + (state.agent === "apple" ? "On-device Apple Translation. Message text stays on this Mac." : "Sends text to your signed-in provider.");
   $("session-note").textContent = state.demo ? "Demo mode does not read KakaoTalk or save chat preferences." : "Preferences stay on this computer. Messages stay in memory.";
   if (state.demo) {
     $("empty").querySelector("h3").textContent="Try a sample conversation.";
@@ -389,7 +409,16 @@ $("toggle").onclick = async function() {
 };
 $("chat").oninput = function() { selectedChatId=null;$("toggle").disabled=!running&&!$("chat").value.trim(); };
 $("chat").onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
-for (const id of ["agent","target","interval"]) $(id).onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
+for (const id of ["agent","target","interval"]) $(id).onchange = async function() {
+  try { await saveConfig();await tick(); }
+  catch(e) { if (lastState) { $("agent").value=lastState.agent;$("target").value=lastState.target; } showError(e.message); }
+};
+$("apple-install").onclick = async function() {
+  $("apple-install").disabled=true;
+  try { applyState(await api("/api/apple/install",{target:$("target").value})); }
+  catch(e) { $("apple-install").disabled=false; showError(e.message); }
+};
+$("apple-settings").onclick = async function() { try { await api("/api/apple/settings",{}); } catch(e) { showError(e.message); } };
 let chatPickerError = null, chatPickerGeneration = 0;
 function closeChatPicker() {
   chatPickerGeneration++;

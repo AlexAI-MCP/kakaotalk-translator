@@ -1,5 +1,5 @@
 // KakaoTalk Translator: polls a local chat via kakaocli, optionally translates new messages with an
-// agent CLI, and serves a localhost-only browser page. Zero dependencies (Node >= 18).
+// agent CLI or on-device Apple Translation, and serves a localhost-only browser page. Zero dependencies (Node >= 18).
 //   node server.mjs [--demo] [--no-open]
 import http from "node:http";
 import fs from "node:fs";
@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { parseCliJson, parseMessages, needsTranslation as translationNeeded } from "./lib/messages.mjs";
-import { findCommand, cliSupport, readPreferences, cleanPreferences } from "./lib/runtime.mjs";
+import { findCommand, cliSupport, readPreferences, cleanPreferences, appleCommand, appleSupport, appleCheckPairs, appleReady } from "./lib/runtime.mjs";
 import { createChatNameTranslator } from "./lib/chat-names.mjs";
 import { parsePhotos, photoQueries, fetchPhoto } from "./lib/photos.mjs";
 import { ApiError, loadApiConfig, validateApiConfig, saveApiConfig, publicApiConfig, listModels, translateWithApi } from "./lib/api-provider.mjs";
@@ -22,6 +22,8 @@ const DEMO = process.argv.includes("--demo");
 const MAX_MESSAGES = 500;
 const BATCH = 12;
 const AGENT_TIMEOUT_MS = 90_000;
+const APPLE_INSTALL_TIMEOUT_MS = 30 * 60_000; // the macOS download window stays open as long as the user needs
+const LANGUAGE_SETTINGS = "x-apple.systempreferences:com.apple.Localization-Settings.extension";
 const SETTINGS = DEMO ? null : process.env.KAKAO_LIVE_SETTINGS_PATH || path.join(DIR, "settings.local.json");
 const API_SETTINGS = DEMO ? null : process.env.KAKAO_LIVE_API_SETTINGS_PATH || path.join(DIR, "api-provider.local.json");
 let apiConfig = loadApiConfig(API_SETTINGS);
@@ -34,6 +36,11 @@ const cli = {
   claude: cliSupport("claude", ["--safe-mode", "--no-session-persistence", "--tools", "--strict-mcp-config"]),
   codex: cliSupport("codex", ["--ephemeral", "--disable", "--sandbox"]),
 };
+const APPLE = appleCommand();
+const apple = appleSupport(APPLE); // pairs refresh at runtime, so a finished download needs no restart
+let appleCheckedAt = Date.now();
+let appleRefresh = null; // in-flight --check
+let appleInstall = null; // in-flight --install (macOS download window)
 
 const state = {
   running: false,
@@ -55,6 +62,11 @@ let authorError = null;
 const authorNames = new Map(); // chatId:senderId -> room-specific nickname, memory only
 const listedChats = new Map(); // only rooms returned by the reader may request English labels
 const chatNameTranslator = createChatNameTranslator(async (names, engine) => {
+  if (engine === "apple") {
+    const result = await callApple(names, "en");
+    if (!result || result.code !== 0) throw new Error("Room-name translation failed.");
+    return extractArray(result.out, names.length);
+  }
   if (engine === "api") {
     return runApi((signal) => translateWithApi(apiConfig, names, "en", { signal, kind: "room-names" }));
   }
@@ -76,8 +88,10 @@ let streamId = randomUUID();
 // ---------------------------------------------------------------- helpers
 function availability() {
   return { claude: cli.claude.installed, codex: cli.codex.installed, kakaocli: DEMO || cli.kakaocli,
-    claudeCompatible: cli.claude.compatible, codexCompatible: cli.codex.compatible,
-    apiConfigured: Boolean(apiConfig.model), apiModel: apiConfig.model, platform: process.platform };
+    claudeCompatible: cli.claude.compatible, codexCompatible: cli.codex.compatible, platform: process.platform,
+    apiConfigured: Boolean(apiConfig.model), apiModel: apiConfig.model,
+    apple: apple.installed, appleKoEn: appleReady(apple, "en"), appleEnKo: appleReady(apple, "ko"),
+    appleInstall: appleInstall ? "prompting" : "idle" };
 }
 async function runApi(operation, translation = false) {
   const controller = new AbortController();
@@ -132,6 +146,22 @@ function runCapture(cmd, args, { input, timeoutMs = 20_000 } = {}) {
     if (input != null) child.stdin.end(input);
     else child.stdin.end();
   });
+}
+// Async --check (never spawnSync after startup). fresh waits out an older check so a just-finished download counts.
+async function refreshApple(fresh = false) {
+  if (!apple.installed) return;
+  if (fresh && appleRefresh) await appleRefresh;
+  appleRefresh ??= runCapture(APPLE, ["--check"], { timeoutMs: 10_000 }).then((r) => {
+    const pairs = r.code === 0 ? appleCheckPairs(r.code, r.out) : null;
+    if (pairs) apple.pairs = pairs; // keep the last known state if the check fails
+    appleCheckedAt = Date.now();
+  }).finally(() => { appleRefresh = null; });
+  return appleRefresh;
+}
+// Polled from state requests while a downloadable pack is missing; at most one check in flight.
+function maybeRefreshApple() {
+  const waiting = ["ko-en", "en-ko"].some((k) => apple.pairs[k] !== "installed" && apple.pairs[k] !== "unsupported");
+  if (apple.installed && waiting && !appleRefresh && Date.now() - appleCheckedAt > 5000) void refreshApple();
 }
 async function resolveAuthors(rows) {
   const now = Date.now();
@@ -275,6 +305,10 @@ function extractArray(output, expected) {
     return null;
   }
 }
+// On-device helper: structured JSON on stdin, no prompt, never leaves this Mac.
+function callApple(texts, target = state.target) {
+  return runCapture(APPLE, [], { input: JSON.stringify({ source: target === "en" ? "ko" : "en", target, texts }), timeoutMs: 30_000 });
+}
 async function callAgent(prompt, a = state.agent) {
   if (a === "claude") {
     const args = ["-p", "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config",
@@ -299,6 +333,7 @@ async function translatePending() {
       ? { code: 0, out: JSON.stringify(await runApi((signal) => translateWithApi(apiConfig, texts, state.target, { signal }), true)) }
       : DEMO && agent === "demo"
       ? { code: 0, out: JSON.stringify(pending.map((m) => DEMO_LINES.find((line) => line[1] === m.text)?.[2] ?? m.text)) }
+      : agent === "apple" ? await callApple(texts)
       : await callAgent(buildPrompt(texts));
     if (generation !== translationGeneration) return;
     const arr = r && r.code === 0 ? extractArray(r.out, pending.length) : null;
@@ -306,8 +341,11 @@ async function translatePending() {
       if (arr) { m.translation = arr[i]; m.tstate = "done"; } else m.tstate = "error";
       m.seq = ++seq; // re-announce so the browser picks up the translation
     });
-    // Never echo the CLI response: it can contain the original chat text.
-    translationError = arr ? null : `Translation failed (${agent}): ${r?.code === 0 ? "unexpected response format" : `CLI exit ${r?.code ?? "timeout"}`}. Check CLI sign-in or update it.`;
+    // Never echo the CLI/helper response: it can contain the original chat text.
+    const hint = agent !== "apple" ? "Check CLI sign-in or update it." : r?.code === 2
+      ? "Download Korean from the Translation settings or run npm run setup:apple." : "Run npm run doctor.";
+    if (agent === "apple" && r?.code === 2) void refreshApple();
+    translationError = arr ? null : `Translation failed (${agent}): ${r?.code === 0 ? "unexpected response format" : `${agent === "apple" ? "helper" : "CLI"} exit ${r?.code ?? "timeout"}`}. ${hint}`;
   } catch (error) {
     if (generation !== translationGeneration) return;
     for (const m of pending) { m.tstate = "error"; m.seq = ++seq; }
@@ -349,7 +387,7 @@ function readBody(req) {
     req.on("end", () => { try { resolve(JSON.parse(data || "{}")); } catch { resolve({}); } });
   });
 }
-const AGENT_RE = /^(claude|codex|api|none|demo)$/;
+const AGENT_RE = /^(claude|codex|apple|api|none|demo)$/;
 const server = http.createServer(async (req, res) => {
   // DNS-rebinding / cross-site guard: only our own localhost origin may talk to this server.
   const host = String(req.headers.host || "");
@@ -360,6 +398,17 @@ const server = http.createServer(async (req, res) => {
     return send(res, 403, { error: "forbidden" });
   }
   if (req.method === "GET" && url.pathname === "/") return send(res, 200, fs.readFileSync(path.join(DIR, "index.html")), "text/html; charset=utf-8");
+  if (req.method === "GET" && url.pathname === "/api/state") { maybeRefreshApple(); return send(res, 200, publicState()); }
+  if (req.method === "GET" && url.pathname === "/api/photo") {
+    const id = url.searchParams.get("id");
+    const source = photoSources.get(id);
+    if (!source) return send(res, 404, { error: "Photo is no longer available in this conversation." });
+    try {
+      const photo = await fetchPhoto(url.searchParams.get("full") === "1" ? source.original : source.preview);
+      if (photoSources.get(id) !== source) return send(res, 404, { error: "Photo is no longer available in this conversation." });
+      return send(res, 200, photo.bytes, photo.type);
+    } catch { return send(res, 502, { error: "Photo unavailable. It may have expired; try opening it in KakaoTalk." }); }
+  }
   if (req.method === "GET" && url.pathname === "/settings") return send(res, 200, fs.readFileSync(path.join(DIR, "settings.html")), "text/html; charset=utf-8");
   if (req.method === "GET" && url.pathname === "/api/provider") return send(res, 200, { ...publicApiConfig(apiConfig), ephemeral: DEMO });
   if (req.method === "POST" && ["/api/provider", "/api/provider/models", "/api/provider/test", "/api/provider/preview"].includes(url.pathname)) {
@@ -393,18 +442,8 @@ const server = http.createServer(async (req, res) => {
         { error: error instanceof ApiError ? error.message : "Could not update API settings." });
     }
   }
-  if (req.method === "GET" && url.pathname === "/api/state") return send(res, 200, publicState());
-  if (req.method === "GET" && url.pathname === "/api/photo") {
-    const id = url.searchParams.get("id");
-    const source = photoSources.get(id);
-    if (!source) return send(res, 404, { error: "Photo is no longer available in this conversation." });
-    try {
-      const photo = await fetchPhoto(url.searchParams.get("full") === "1" ? source.original : source.preview);
-      if (photoSources.get(id) !== source) return send(res, 404, { error: "Photo is no longer available in this conversation." });
-      return send(res, 200, photo.bytes, photo.type);
-    } catch { return send(res, 502, { error: "Photo unavailable. It may have expired; try opening it in KakaoTalk." }); }
-  }
   if (req.method === "GET" && url.pathname === "/api/messages") {
+    maybeRefreshApple();
     const after = Number(url.searchParams.get("after") || 0);
     const rows = [...messages.values()].filter((m) => m.seq > after).map(({ key, ...m }) => ({ id: key, ...m }));
     return send(res, 200, { messages: rows, state: publicState() });
@@ -454,6 +493,16 @@ const server = http.createServer(async (req, res) => {
     if (b.agent === "demo" && !DEMO) return send(res, 400, { error: "Sample translations are only available in demo mode." });
     if (b.agent === "claude" && !cli.claude.compatible) return send(res, 400, { error: "Install/update Claude Code and sign in. Safe-mode and no-session-persistence options are required." });
     if (b.agent === "codex" && !cli.codex.compatible) return send(res, 400, { error: "Install/update Codex CLI and sign in. Ephemeral sessions are required." });
+    const nextAgent = typeof b.agent === "string" && AGENT_RE.test(b.agent) ? b.agent : state.agent;
+    const nextTarget = b.target === "ko" || b.target === "en" ? b.target : state.target;
+    if (nextAgent === "apple" && !apple.installed) return send(res, 400, { error: "Apple Translation helper is missing. Run npm run setup:apple and restart the viewer." });
+    if (nextAgent === "apple" && apple.installed && !appleReady(apple, nextTarget)) await refreshApple(true);
+    if (nextAgent === "apple" && !appleReady(apple, nextTarget)) {
+      const direction = nextTarget === "en" ? "Korean to English" : "English to Korean";
+      return send(res, 400, { error: apple.pairs[nextTarget === "en" ? "ko-en" : "en-ko"] === "supported"
+        ? `Apple Translation for ${direction} is not downloaded. Use Download Korean in the viewer, run npm run setup:apple, or add Korean under System Settings > General > Language & Region > Translation Languages.`
+        : `Apple Translation does not support ${direction} on this Mac. Run npm run doctor.` });
+    }
     if (b.agent === "api" && !apiConfig.model) return send(res, 400, { error: "Choose and save an API model in Settings first." });
     if (typeof b.chat === "string" && b.chat.trim() && b.chat.length <= 100) {
       if (b.chat.trim() !== state.chat) { state.chat = b.chat.trim(); state.chatId = null; }
@@ -473,6 +522,31 @@ const server = http.createServer(async (req, res) => {
       catch { return send(res, 500, { error: "Could not save local preferences. Check that the project folder is writable." }); }
     }
     return send(res, 200, publicState());
+  }
+  if (req.method === "POST" && url.pathname === "/api/apple/install") {
+    const b = await readBody(req);
+    if (!APPLE) return send(res, 400, { error: process.platform !== "darwin" ? "Apple Translation requires macOS 26 or later."
+      : "Apple Translation helper is missing. Run npm run setup:apple and restart the viewer." });
+    if (appleInstall) return send(res, 409, { error: "The macOS download window is already open." });
+    const target = b.target === "ko" || b.target === "en" ? b.target : state.target;
+    // Opens Apple's own download prompt only; no message text is passed. Output is not needed: a fresh --check follows.
+    const child = spawn(APPLE, ["--install", target === "en" ? "ko" : "en", target], { stdio: "ignore" });
+    appleInstall = child;
+    activeChildren.add(child);
+    const t = setTimeout(() => child.kill("SIGTERM"), APPLE_INSTALL_TIMEOUT_MS);
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true; clearTimeout(t); activeChildren.delete(child);
+      void refreshApple(true).finally(() => { appleInstall = null; });
+    };
+    child.on("error", done); child.on("close", done);
+    return send(res, 202, publicState());
+  }
+  if (req.method === "POST" && url.pathname === "/api/apple/settings") {
+    if (process.platform !== "darwin") return send(res, 400, { error: "Language & Region settings are only available on macOS." });
+    if (process.env.KAKAO_LIVE_NO_OPEN !== "1") spawn("open", [LANGUAGE_SETTINGS], { stdio: "ignore", detached: true }).unref();
+    return send(res, 200, { ok: true });
   }
   if (req.method === "POST" && url.pathname === "/api/start") {
     if (!DEMO && (!state.chat && !state.chatId)) return send(res, 400, { error: "Choose a chat before starting." });

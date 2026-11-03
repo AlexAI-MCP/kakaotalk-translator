@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { findCommand, cliSupport } from "../lib/runtime.mjs";
+import { findCommand, cliSupport, appleCommand, appleSupport } from "../lib/runtime.mjs";
 
 console.log("KakaoTalk Translator / environment check");
 console.log(`Node: ${process.version} (${Number(process.versions.node.split('.')[0]) >= 18 ? "supported" : "upgrade to Node 18+"})`);
@@ -10,6 +10,9 @@ for (const [name, flags] of [["claude",["--safe-mode","--no-session-persistence"
   const support = cliSupport(name, flags);
   console.log(`${name}: ${support.compatible ? "privacy options available; sign in separately" : support.installed ? "installed but needs an update for privacy options" : "optional, not installed"}`);
 }
+const apple = appleSupport(appleCommand());
+const pack = (s) => s === "installed" ? "installed" : s === "supported" ? "not downloaded; run npm run setup:apple to download, or use the Download button in the viewer" : "unsupported";
+console.log(`Apple Translation: ${apple.installed ? `Korean→English ${pack(apple.pairs["ko-en"])}, English→Korean ${pack(apple.pairs["en-ko"])}` : "optional, not installed; run npm run setup:apple (macOS 26+)"}`);
 if (process.platform === "darwin" && reader) {
   const result = spawnSync(reader,["chats","--limit","1","--json"],{encoding:"utf8",timeout:30000,maxBuffer:1024*1024});
   if (result.status === 0) {

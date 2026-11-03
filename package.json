@@ -12,6 +12,7 @@
     "doctor": "node scripts/doctor.mjs",
     "setup:kakaocli": "bash scripts/build-kakaocli.sh",
     "repair:kakaocli": "bash scripts/repair-kakaocli.sh",
+    "setup:apple": "bash scripts/build-apple-translate.sh",
     "test": "node --test test/*.test.mjs",
     "test:reader": "bash scripts/test-kakaocli.sh",
     "eval": "node scripts/eval.mjs",
