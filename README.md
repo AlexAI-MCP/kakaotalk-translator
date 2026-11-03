@@ -1,6 +1,6 @@
 # KakaoTalk Translator
 
-A local, read-only KakaoTalk conversation viewer with optional Korean–English translation through a CLI, an OpenAI-compatible API, or on-device Apple Translation. English interface, Swiss-inspired typography and grid, and Light, Dark and System themes. The controls and status panels stay fixed; only the conversation pane scrolls. Small screens use a Controls drawer. API connections and model selection have a dedicated settings page.
+A local, read-only KakaoTalk conversation viewer with optional Korean–English translation through a CLI, an OpenAI-compatible API, or on-device Apple Translation. English interface, Swiss-inspired typography and grid, and Light, Dark and System themes. Messages appear as chat bubbles grouped by sender, with the translation on top and the original underneath; a Both / English / Original switch above the conversation shows one language only (click a bubble to peek at its original). The controls stay fixed; only the conversation pane scrolls. Small screens use a Controls drawer. API connections and model selection have a dedicated settings page.
 
 This is an unofficial project, not affiliated with Kakao. Use only conversations you are authorized to access. Respect participant privacy and the applicable service terms.
 
