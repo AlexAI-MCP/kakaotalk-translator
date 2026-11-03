@@ -20,7 +20,7 @@ Requires Node.js 18 or later. There are no runtime dependencies and no npm insta
 npm run demo
 ~~~
 
-Open http://127.0.0.1:8777/. Click Start reading. Demo messages and default translations are fictional, prewritten samples; no KakaoTalk database or AI provider is used by default. You can explicitly select an API engine to translate fictional demo messages with your model. API settings in demo mode stay in memory.
+Open http://127.0.0.1:8777/. Reading starts automatically. Demo messages and default translations are fictional, prewritten samples; no KakaoTalk database or AI provider is used by default. You can explicitly select an API engine to translate fictional demo messages with your model. API settings in demo mode stay in memory.
 
 ## Set up your own Mac
 
@@ -45,7 +45,7 @@ npm run doctor
 npm start
 ~~~
 
-The doctor reports checks without printing room names, messages or credentials. In the browser, choose Browse rooms, select a room, and click Start reading. Selection preserves the exact room identifier. Typing part of a name is also supported, but a unique room selection is preferable.
+The doctor reports checks without printing room names, messages or credentials. On first launch the browser opens the room list; select a room and reading starts right away. The room is remembered, so later launches start reading it automatically. Use Stop reading to pause. Selection preserves the exact room identifier. Typing part of a name is also supported, but a unique room selection is preferable.
 
 Live reading has been checked on macOS 26.5 with Node 22.22.3 and Command Line Tools / Swift 6.3.2. The upstream Swift package targets macOS 14 or later; other Mac versions and database revisions still need their own verification. Non-Mac systems can use the demo, not live database reading.
 
@@ -60,6 +60,7 @@ Translation is off by default. Choose a configured API or an installed, already-
 - English translates messages containing Korean characters.
 - Korean translates letter-containing messages without Korean characters.
 - Batches contain up to 12 messages. Each source is limited to 2,000 characters for translation; the UI labels truncated inputs.
+- When reading starts automatically with an engine that sends text off your Mac (Claude Code, Codex or an API), translation is paused until you click Translate now or choose an engine or language. Apple (on-device) translates right away. Clicking Start reading yourself never pauses translation.
 - Existing messages can be queued when the language or engine changes. Turning translation off does not erase completed translations.
 - Claude uses safe mode, disabled tools/hooks, strict MCP configuration and non-persistent sessions. Codex uses ephemeral sessions, disabled hooks and a read-only sandbox. Incompatible CLI versions are disabled.
 

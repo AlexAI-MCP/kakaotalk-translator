@@ -50,7 +50,10 @@ const state = {
   lastError: null,
   polls: 0,
   translating: false,
+  // Set when the viewer auto-starts with an engine that sends text off this Mac; nothing is sent until released.
+  translationHeld: false,
 };
+const OFF_DEVICE_ENGINES = new Set(["claude", "codex", "api"]);
 let seq = 0;
 const messages = new Map(); // key -> message
 const photoSources = new Map(); // opaque photo ID -> provider URLs, memory only
@@ -321,7 +324,7 @@ async function callAgent(prompt, a = state.agent) {
   return null;
 }
 async function translatePending() {
-  if (state.translating || state.agent === "none" || !state.running) return;
+  if (state.translating || state.agent === "none" || !state.running || state.translationHeld) return;
   const pending = [...messages.values()].filter((m) => m.tstate === "pending").slice(-BATCH);
   if (!pending.length) return;
   const generation = translationGeneration;
@@ -514,6 +517,8 @@ const server = http.createServer(async (req, res) => {
     if (typeof b.agent === "string" && AGENT_RE.test(b.agent)) state.agent = b.agent;
     if (b.target === "ko" || b.target === "en") state.target = b.target;
     if (Number.isFinite(b.intervalSec)) state.intervalSec = Math.max(3, Math.min(5, Math.round(b.intervalSec)));
+    // Choosing an engine or language is an explicit translation choice, so it releases an auto-start hold.
+    if (previousAgent !== state.agent || previousTarget !== state.target) state.translationHeld = false;
     if (previousAgent !== state.agent || previousTarget !== state.target || changedChat) {
       requeueTranslations(previousTarget !== state.target || changedChat);
     }
@@ -552,11 +557,19 @@ const server = http.createServer(async (req, res) => {
     if (!DEMO && (!state.chat && !state.chatId)) return send(res, 400, { error: "Choose a chat before starting." });
     if (!DEMO && process.platform !== "darwin") return send(res, 400, { error: "Live chat reading requires macOS. Try npm run demo." });
     if (!DEMO && !cli.kakaocli) return send(res, 503, { error: "kakaocli is missing. Run npm run setup:kakaocli and restart the viewer." });
+    const b = await readBody(req);
+    if (!state.running) state.translationHeld = b.auto === true && OFF_DEVICE_ENGINES.has(state.agent);
     if (!state.running) { state.running = true; firstPoll = true; void pollOnce().catch(() => { state.lastError = "Polling failed. Run npm run doctor."; }).finally(schedule); void translatePending(); }
+    return send(res, 200, publicState());
+  }
+  if (req.method === "POST" && url.pathname === "/api/translation/resume") {
+    state.translationHeld = false;
+    if (state.running) void translatePending();
     return send(res, 200, publicState());
   }
   if (req.method === "POST" && url.pathname === "/api/stop") {
     state.running = false;
+    state.translationHeld = false;
     translationGeneration += 1;
     cancelApiTranslations();
     clearTimeout(timer);
