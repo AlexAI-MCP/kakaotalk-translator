@@ -89,10 +89,14 @@ Use --no-open to prevent automatic browser opening. Stop reading pauses polling;
 
 ## Troubleshooting
 
+The server writes structured diagnostics to its terminal: operation, duration, exit status and timeout or failure category. It never logs command output, message text, room names or credentials. To keep these diagnostics in an ignored local file, run `npm start >> app.local.log 2>&1`; inspect them with `tail -f app.local.log`.
+
 - Connection refused: start the server in the project directory and open the matching port.
+- No messages after restarting the server: room preferences are preserved, but reading starts stopped. Select your room and click Start reading to resume polling. Enable a translation engine separately if needed.
 - Address already in use: stop the previous instance you own or choose another port.
 - Room missing: the selected CLI/database may not expose that room. This is not proof of universal open-chat support.
 - Read error: check KakaoTalk login and manual Full Disk Access approval, then run the doctor.
+- Chat browsing times out or reports “file is not a database”: the pinned reader can time out while detecting newer account IDs. After installing the reader, run `npm run repair:kakaocli`, then restart the viewer. This builds a separate reader with parallel account discovery and a validated local cache, adapted from [upstream PR #20](https://github.com/silver-flight-group/kakaocli/pull/20). The first discovery can take longer; subsequent reads use the cache. The cache lives in `~/.kakaocli/userid.json` with owner-only permissions and contains account metadata, not passwords or message text.
 - Translation unavailable: install/sign in to a compatible provider CLI yourself. No credentials belong in this repository.
 - Unknown room names: the local database may have no room title or contact name to use as a fallback, particularly for group chats. The room picker displays the CLI's result; it cannot reconstruct a missing title. This is separate from an unknown chat-type classification. Do not run harvest or UI automation to populate names.
 - Name unavailable: room-scoped nicknames may be missing from the local database. Do not use UI automation to populate them.

@@ -15,7 +15,7 @@ test("chat picker closes on toggle, outside click, Escape and selection", async 
   const context=vm.createContext({
     $:id=>nodes[id],selectedChatId:null,
     api:async()=>{calls++;return {chats:[{id:"999999999999999999",display_name:"Sample room",member_count:4}]};},
-    saveConfig:async()=>{},tick:async()=>{},showError:message=>{throw Error(message);},
+    saveConfig:async()=>{},tick:async()=>{},showError:()=>{},
     window:{matchMedia:()=>({matches:false})},
     document:{createElement:element,addEventListener:(event,handler)=>{listeners[event]=handler;}},
   });
@@ -28,4 +28,12 @@ test("chat picker closes on toggle, outside click, Escape and selection", async 
   await nodes.browse.onclick();listeners.keydown({key:"Escape"});assert.equal(nodes.chats.hidden,true);assert.equal(nodes.browse.focused,true);
   await nodes.browse.onclick();await nodes.chats.children[0].onclick();
   assert.equal(nodes.chats.hidden,true);assert.equal(nodes.chat.value,"Sample room");assert.equal(context.selectedChatId,"999999999999999999");
+  let visibleError;
+  context.api=async()=>{throw Error("Reader timed out");};
+  context.showError=message=>{visibleError=message;};
+  await nodes.browse.onclick();
+  assert.equal(visibleError,"Reader timed out");
+  assert.equal(context.chatPickerError,"Reader timed out");
+  assert.equal(nodes.browse.disabled,false);
+  assert.equal(nodes.browse.textContent,"Browse your chats ↗");
 });

@@ -11,6 +11,7 @@
     "demo": "node server.mjs --demo",
     "doctor": "node scripts/doctor.mjs",
     "setup:kakaocli": "bash scripts/build-kakaocli.sh",
+    "repair:kakaocli": "bash scripts/repair-kakaocli.sh",
     "test": "node --test test/*.test.mjs",
     "check": "node --check server.mjs && node --check lib/messages.mjs && node --check lib/runtime.mjs && node --check scripts/doctor.mjs && node --check scripts/release-audit.mjs",
     "release:check": "node scripts/release-audit.mjs"

@@ -59,23 +59,39 @@ function needsTranslation(text) {
 }
 function runCapture(cmd, args, { input, timeoutMs = 20_000 } = {}) {
   return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let timedOut = false;
+    let reported = false;
     let out = "";
     let err = "";
+    const operation = cmd === KAKAOCLI ? `reader.${args[0]}` : "translation";
+    const report = (code, signal) => {
+      if (reported) return;
+      reported = true;
+      console.error(JSON.stringify({
+        timestamp: new Date().toISOString(), operation, durationMs: Date.now() - startedAt,
+        code, signal: signal || null, timedOut,
+        failure: /file is not a database|file is encrypted|not a database/i.test(err) ? "database_decryption"
+          : /permission|denied|not permitted/i.test(err) ? "permission" : null,
+      }));
+    };
     const child = spawn(findCommand(cmd) || cmd, args, { stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" } });
     activeChildren.add(child);
-    const t = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    const t = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeoutMs);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => {
       activeChildren.delete(child);
       clearTimeout(t);
-      resolve({ code: -1, out, err: String(e.message || e) });
+      report(-1);
+      resolve({ code: -1, out, err: String(e.message || e), timedOut });
     });
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       activeChildren.delete(child);
       clearTimeout(t);
-      resolve({ code, out, err });
+      report(code, signal);
+      resolve({ code, out, err, timedOut });
     });
     child.stdin.on("error", () => {});
     if (input != null) child.stdin.end(input);
@@ -296,7 +312,11 @@ const server = http.createServer(async (req, res) => {
     if (process.platform !== "darwin") return send(res, 400, { error: "Live chat reading requires macOS. Try npm run demo." });
     if (!cli.kakaocli) return send(res, 503, { error: "kakaocli is missing. Run npm run setup:kakaocli and restart the viewer." });
     const r = await runCapture(KAKAOCLI, ["chats", "--limit", "200", "--json"], { timeoutMs: 20_000 });
-    if (r.code !== 0) return send(res, 503, { error: "Could not read the chat list. Check KakaoTalk sign-in and Full Disk Access." });
+    if (r.code !== 0) return send(res, 503, { error: r.timedOut
+      ? "Reading chats timed out after 20 seconds. Check for a macOS permission prompt and keep KakaoTalk open. See the server diagnostics for details."
+      : /file is not a database|file is encrypted|not a database/i.test(r.err)
+        ? "The reader could not decrypt the KakaoTalk database. Your account or KakaoTalk database version may not be supported by this reader."
+        : "Could not read the chat list. Check KakaoTalk sign-in and Full Disk Access." });
     try {
       const chats = parseCliJson(r.out);
       if (!Array.isArray(chats)) throw new Error();

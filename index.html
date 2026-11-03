@@ -273,7 +273,7 @@ function applyState(state) {
   $("refresh-value").textContent = state.intervalSec;
   $("room-title").textContent = state.chat || "No chat selected";
   $("updated").textContent = state.lastPollAt ? "Updated " + fmtTime(state.lastPollAt) : "Waiting for first update";
-  showError(state.lastError);
+  showError(state.lastError || chatPickerError);
   const a = state.available || {};
   $("availability").replaceChildren();
   for (const item of [["kakaocli",a.kakaocli],["Claude Code",a.claudeCompatible],["Codex CLI",a.codexCompatible]]) {
@@ -328,6 +328,7 @@ $("toggle").onclick = async function() {
 $("chat").oninput = function() { selectedChatId=null;$("toggle").disabled=!running&&!$("chat").value.trim(); };
 $("chat").onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
 for (const id of ["agent","target","interval"]) $(id).onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
+let chatPickerError = null;
 function closeChatPicker() {
   $("chats").hidden=true;
   $("browse").textContent="Browse your chats ↗";
@@ -336,7 +337,8 @@ function closeChatPicker() {
 }
 $("browse").onclick = async function() {
   if (!$("chats").hidden) { closeChatPicker();return; }
-  $("chat-status").textContent="Loading chats…";$("browse").disabled=true;
+  chatPickerError=null;showError("");
+  $("chat-status").textContent="Loading chats… This can take up to 20 seconds.";$("browse").textContent="Loading chats…";$("browse").disabled=true;
   try {
     const data=await api("/api/chats");$("chats").replaceChildren();$("chats").hidden=false;
     $("browse").textContent="Hide your chats ↑";$("browse").setAttribute("aria-expanded","true");
@@ -353,8 +355,8 @@ $("browse").onclick = async function() {
       $("chats").appendChild(button);
     }
     if (!data.chats.length) $("chat-status").textContent="No chats found. Open KakaoTalk and check your local account.";
-  } catch(e) { $("chat-status").textContent=e.message; }
-  finally { $("browse").disabled=false; }
+  } catch(e) { chatPickerError=e.message;$("chat-status").textContent=e.message;showError(e.message); }
+  finally { $("browse").disabled=false;if ($("chats").hidden) $("browse").textContent="Browse your chats ↗"; }
 };
 document.addEventListener("click",function(event) {
   if (!$("chats").hidden && !event.target.closest("#browse, #chats")) closeChatPicker();
