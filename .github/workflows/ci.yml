@@ -17,3 +17,12 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run release:check
+  reader:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: brew install sqlcipher pkg-config
+      - run: npm run test:reader

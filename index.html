@@ -101,9 +101,17 @@ input::placeholder { color:var(--muted); }
 .message-index { display:block; font-size:9px; color:var(--muted); margin-top:10px; }
 .text,.translation-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .text { font-size:14px; }
+.photos { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr)); gap:10px; max-width:560px; margin-top:12px; }
+.photos[hidden] { display:none; }
+.photos a { display:block; min-width:0; background:var(--soft); border:1px solid var(--line); }
+.photos a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.photos img { display:block; width:100%; height:180px; object-fit:contain; }
+.photo-unavailable { padding:12px; color:var(--muted); font-size:12px; border:1px solid var(--line); }
 .tr { padding:12px 0 0 13px; margin-top:13px; border-left:2px solid var(--accent); }
 .tr-label { color:var(--accent); display:block; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-bottom:5px; }
 .translation-text { font-size:14px; }
+.text a,.translation-text a { text-decoration:underline; text-underline-offset:2px; }
+.text a:hover,.translation-text a:hover { color:var(--accent); }
 .tr.pending,.tr.error { color:var(--muted); }
 .tr.error { border-color:var(--error); }
 .tr.error .tr-label { color:var(--error); }
@@ -159,7 +167,7 @@ a { color:inherit; }
 <header>
   <div class="topline">
     <div class="brand"><span class="brand-mark" aria-hidden="true">K</span><span>KAKAO / TRANSLATOR</span></div>
-    <div class="top-meta"><button id="settings-toggle" class="secondary" type="button" aria-expanded="false" aria-controls="workspace-controls">Settings</button><span id="mode" class="badge">Local · read-only</span><span id="connection"><span class="dot"></span><span id="run">Connecting</span></span></div>
+    <div class="top-meta"><a href="/settings">API settings</a><button id="settings-toggle" class="secondary" type="button" aria-expanded="false" aria-controls="workspace-controls">Controls</button><span id="mode" class="badge">Local · read-only</span><span id="connection"><span class="dot"></span><span id="run">Connecting</span></span></div>
   </div>
   <div class="hero">
     <div><div class="eyebrow">Conversation, made legible.</div><h1>KakaoTalk Translator</h1></div>
@@ -183,6 +191,7 @@ a { color:inherit; }
       <option value="claude">Claude Code</option>
       <option value="codex">Codex CLI</option>
       <option value="apple">Apple (on-device)</option>
+      <option value="api">OpenAI-compatible API</option>
     </select></div>
     <div class="field"><label for="target">Translate to</label><select id="target"><option value="en">English</option><option value="ko">Korean</option></select></div>
     <p class="help" id="translation-hint">Choose an engine to enable translation.</p>
@@ -227,7 +236,7 @@ a { color:inherit; }
   </div>
 </main>
 </div>
-<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your own signed-in CLI or on-device Apple Translation.</span><span>No tracking · No hosted chat storage</span></footer>
+<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your selected CLI, API, or on-device Apple Translation.</span><span>No tracking · No hosted chat storage</span></footer>
 </div>
 <script>
 const $ = function(id) { return document.getElementById(id); };
@@ -247,18 +256,69 @@ function fmtTime(value) {
   const date = new Date(value);
   return isNaN(date) ? "" : date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 }
+function renderPhotos(el, message) {
+  const photos = message.photos || [];
+  const gallery = el.querySelector(".photos");
+  if (gallery.dataset.ids === photos.map((photo) => photo.id).join(",")) return;
+  gallery.dataset.ids = photos.map((photo) => photo.id).join(",");
+  gallery.replaceChildren();
+  for (const [i, photo] of photos.entries()) {
+    const link = document.createElement("a");
+    link.href = "/api/photo?id=" + encodeURIComponent(photo.id) + "&full=1";
+    link.target = "_blank"; link.rel = "noopener noreferrer";
+    link.title = "Open full-size photo";
+    const image = document.createElement("img");
+    image.alt = "Photo " + (i + 1);
+    image.loading = "lazy"; image.decoding = "async";
+    image.src = "/api/photo?id=" + encodeURIComponent(photo.id);
+    image.onerror = function() {
+      const error = document.createElement("span");
+      error.className = "photo-unavailable";
+      error.textContent = "Photo unavailable · try KakaoTalk";
+      link.replaceWith(error);
+    };
+    link.appendChild(image); gallery.appendChild(link);
+  }
+  gallery.hidden = !photos.length;
+}
+// Split chat text into plain and link parts. Only http(s) and www. URLs; spaces or non-ASCII (e.g. Korean
+// written right after a link) end the URL, and trailing punctuation or an unmatched ")" is left as text.
+function linkParts(text) {
+  const parts = []; let last = 0;
+  for (const m of String(text).matchAll(/\b(?:https?:\/\/|www\.)[^\s<>"'`\u0080-\uffff]+/gi)) {
+    let url = m[0];
+    while (/[.,!?;:'"\]]$/.test(url) || (url.endsWith(")") && url.split(")").length > url.split("(").length)) url = url.slice(0, -1);
+    let href = null;
+    try { const u = new URL(/^www\./i.test(url) ? "https://" + url : url); if (u.protocol === "http:" || u.protocol === "https:") href = u.href; } catch {}
+    if (!href) continue;
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) });
+    parts.push({ text: url, href });
+    last = m.index + url.length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+function setLinkedText(el, text) {
+  el.replaceChildren(...linkParts(text).map((part) => {
+    if (!part.href) return document.createTextNode(part.text);
+    const a = document.createElement("a"); a.href = part.href; a.textContent = part.text;
+    a.target = "_blank"; a.rel = "noopener noreferrer";
+    return a;
+  }));
+}
 function render(message) {
   let el = nodes.get(message.id);
   if (!el) {
     el = document.createElement("article"); el.className = "msg";
-    el.innerHTML = '<div class="meta"><span class="author"></span><time class="time"></time><span class="message-index"></span></div><div><div class="text"></div><div class="tr" hidden><span class="tr-label"></span><div class="translation-text"></div></div></div>';
+    el.innerHTML = '<div class="meta"><span class="author"></span><time class="time"></time><span class="message-index"></span></div><div><div class="text"></div><div class="photos" hidden></div><div class="tr" hidden><span class="tr-label"></span><div class="translation-text"></div></div></div>';
     nodes.set(message.id,el); $("list-msgs").appendChild(el);
     el.querySelector(".message-index").textContent = String(nodes.size).padStart(3,"0");
   }
   el.querySelector(".author").textContent = message.author;
   el.querySelector(".time").textContent = fmtTime(message.sentAt);
   if (message.sentAt) el.querySelector(".time").dateTime = message.sentAt;
-  el.querySelector(".text").textContent = message.text;
+  setLinkedText(el.querySelector(".text"), message.text);
+  renderPhotos(el, message);
   const tr = el.querySelector(".tr");
   tr.hidden = message.tstate === "skip";
   tr.className = "tr " + (message.tstate === "done" ? "" : message.tstate);
@@ -266,7 +326,7 @@ function render(message) {
   tr.querySelector(".tr-label").textContent = message.tstate === "done"
     ? language + (message.truncated ? " · first 2,000 characters" : "")
     : message.tstate === "pending" ? "Translation queued" : "Translation unavailable";
-  tr.querySelector(".translation-text").textContent = message.tstate === "done" ? message.translation : message.tstate === "pending" ? "Translating…" : "Check your engine and sign-in status.";
+  setLinkedText(tr.querySelector(".translation-text"), message.tstate === "done" ? message.translation : message.tstate === "pending" ? "Translating…" : "Check your engine and sign-in status.");
 }
 function applyState(state) {
   lastState = state; running = state.running;
@@ -280,9 +340,9 @@ function applyState(state) {
   $("translated").textContent = String(state.translationCounts && state.translationCounts.done || 0).padStart(3,"0");
   $("pending").textContent = String(state.translationCounts && state.translationCounts.pending || 0).padStart(3,"0");
   $("refresh-value").textContent = state.intervalSec;
-  $("room-title").textContent = state.chat || "No chat selected";
+  $("room-title").textContent = state.chat ? displayChatName(state.chat, state.chatEnglishName) : "No chat selected";
   $("updated").textContent = state.lastPollAt ? "Updated " + fmtTime(state.lastPollAt) : "Waiting for first update";
-  showError(state.lastError);
+  showError(state.lastError || chatPickerError);
   const a = state.available || {};
   $("availability").replaceChildren();
   const appleUsable = state.target === "ko" ? a.appleEnKo : a.appleKoEn;
@@ -305,12 +365,14 @@ function applyState(state) {
     : "Apple (on-device) needs the Korean language for " + (state.target === "ko" ? "English to Korean." : "Korean to English.");
   $("apple-install").hidden = $("apple-settings").hidden = !a.apple;
   $("apple-install").disabled = prompting;
+  $("agent").querySelector('option[value="api"]').disabled = !a.apiConfigured;
   if (!initialized) {
     $("chat").value = state.chat; selectedChatId = state.chatId; $("agent").value=state.agent; $("target").value=state.target; $("interval").value=String(state.intervalSec); initialized=true;
     $("toggle").disabled = !running && !state.demo && !state.chat;
   }
   $("translation-hint").textContent = state.agent === "none" ? "Original messages only. No text is sent to an AI provider."
     : state.agent === "demo" ? "Fictional messages and prewritten sample translations. No AI calls."
+    : state.agent === "api" ? (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ") + "Sends text to your configured API · " + a.apiModel
     : (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ")
       + (state.agent === "apple" ? "On-device Apple Translation. Message text stays on this Mac." : "Sends text to your signed-in provider.");
   $("session-note").textContent = state.demo ? "Demo mode does not read KakaoTalk or save chat preferences." : "Preferences stay on this computer. Messages stay in memory.";
@@ -357,22 +419,48 @@ $("apple-install").onclick = async function() {
   catch(e) { $("apple-install").disabled=false; showError(e.message); }
 };
 $("apple-settings").onclick = async function() { try { await api("/api/apple/settings",{}); } catch(e) { showError(e.message); } };
+let chatPickerError = null, chatPickerGeneration = 0;
 function closeChatPicker() {
+  chatPickerGeneration++;
   $("chats").hidden=true;
   $("browse").textContent="Browse your chats ↗";
   $("browse").setAttribute("aria-expanded","false");
   $("chat-status").textContent="";
 }
+function displayChatName(original, english) {
+  return english && english !== original ? original + " (" + english + ")" : original;
+}
+async function translateChatLabels(chats, entries, generation) {
+  if (!lastState || ["none", "demo"].includes(lastState.agent)) return;
+  const ids = chats.filter((chat) => !chat.english_name && /[ㄱ-ㆎ가-힣]/.test(chat.display_name)).map((chat) => chat.id);
+  if (!ids.length) return;
+  const engine = lastState.agent;
+  $("chat-status").textContent = chats.length + " chats · translating English labels…";
+  try {
+    const data = await api("/api/chat-names", { ids: ids });
+    if (generation !== chatPickerGeneration || lastState.agent !== engine) return;
+    for (const chat of data.chats) {
+      const entry = entries.get(chat.id);
+      if (entry) entry.label.textContent = displayChatName(entry.original, chat.english_name);
+    }
+    $("chat-status").textContent = chats.length + " chats · names are local to your account";
+  } catch (error) {
+    if (generation === chatPickerGeneration && lastState.agent === engine) $("chat-status").textContent = error.message;
+  }
+}
 $("browse").onclick = async function() {
   if (!$("chats").hidden) { closeChatPicker();return; }
-  $("chat-status").textContent="Loading chats…";$("browse").disabled=true;
+  chatPickerError=null;showError("");
+  $("chat-status").textContent="Loading chats… This can take up to 20 seconds.";$("browse").textContent="Loading chats…";$("browse").disabled=true;
   try {
     const data=await api("/api/chats");$("chats").replaceChildren();$("chats").hidden=false;
+    const generation = ++chatPickerGeneration, entries = new Map();
     $("browse").textContent="Hide your chats ↑";$("browse").setAttribute("aria-expanded","true");
     $("chat-status").textContent=data.chats.length + " chats · names are local to your account";
     for (const chat of data.chats) {
       const button=document.createElement("button");button.type="button";button.className="chat-option";
-      const name=document.createElement("span");name.textContent=chat.display_name;
+      const name=document.createElement("span");name.textContent=displayChatName(chat.display_name,chat.english_name);
+      entries.set(chat.id, { label: name, original: chat.display_name });
       const meta=document.createElement("small");meta.textContent=(chat.member_count||0) + " participants";
       button.append(name,meta);
       button.onclick=async function() {
@@ -382,8 +470,9 @@ $("browse").onclick = async function() {
       $("chats").appendChild(button);
     }
     if (!data.chats.length) $("chat-status").textContent="No chats found. Open KakaoTalk and check your local account.";
-  } catch(e) { $("chat-status").textContent=e.message; }
-  finally { $("browse").disabled=false; }
+    void translateChatLabels(data.chats, entries, generation);
+  } catch(e) { chatPickerError=e.message;$("chat-status").textContent=e.message;showError(e.message); }
+  finally { $("browse").disabled=false;if ($("chats").hidden) $("browse").textContent="Browse your chats ↗"; }
 };
 document.addEventListener("click",function(event) {
   if (!$("chats").hidden && !event.target.closest("#browse, #chats")) closeChatPicker();
