@@ -106,6 +106,10 @@ input::placeholder { color:var(--muted); }
 .photos a { display:block; min-width:0; background:var(--soft); border:1px solid var(--line); }
 .photos a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .photos img { display:block; width:100%; height:180px; object-fit:contain; }
+.lightbox { border:0; padding:24px; margin:0; width:100vw; height:100dvh; max-width:none; max-height:none; background:transparent; overflow:hidden; cursor:zoom-out; }
+.lightbox[open] { display:grid; place-items:center; }
+.lightbox::backdrop { background:rgba(0,0,0,.85); }
+.lightbox img { display:block; max-width:100%; max-height:calc(100dvh - 48px); object-fit:contain; cursor:default; box-shadow:0 10px 40px rgba(0,0,0,.5); }
 .photo-unavailable { padding:12px; color:var(--muted); font-size:12px; border:1px solid var(--line); }
 .tr { padding:12px 0 0 13px; margin-top:13px; border-left:2px solid var(--accent); }
 .tr-label { color:var(--accent); display:block; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-bottom:5px; }
@@ -236,6 +240,7 @@ a { color:inherit; }
   </div>
 </main>
 </div>
+<dialog id="lightbox" class="lightbox" aria-label="Photo"><img id="lightbox-image" alt=""></dialog>
 <footer class="footnote"><span id="privacy-note">Local reader. Translation uses your selected CLI, API, or on-device Apple Translation.</span><span>No tracking · No hosted chat storage</span></footer>
 </div>
 <script>
@@ -256,6 +261,16 @@ function fmtTime(value) {
   const date = new Date(value);
   return isNaN(date) ? "" : date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 }
+function openLightbox(src, alt) {
+  const image = $("lightbox-image");
+  image.src = src; image.alt = alt || "Photo";
+  $("lightbox").showModal();
+}
+// Clicking anywhere except the photo itself closes the viewer; Escape closes it natively.
+$("lightbox").addEventListener("click", function(event) {
+  if (event.target !== $("lightbox-image")) $("lightbox").close();
+});
+$("lightbox").addEventListener("close", function() { $("lightbox-image").removeAttribute("src"); });
 function renderPhotos(el, message) {
   const photos = message.photos || [];
   const gallery = el.querySelector(".photos");
@@ -266,12 +281,22 @@ function renderPhotos(el, message) {
     const link = document.createElement("a");
     link.href = "/api/photo?id=" + encodeURIComponent(photo.id) + "&full=1";
     link.target = "_blank"; link.rel = "noopener noreferrer";
-    link.title = "Open full-size photo";
+    link.title = "View full-size photo";
+    // Plain click opens the in-page viewer; Cmd/Ctrl/Shift/middle-click still opens a new tab.
+    link.onclick = function(event) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      openLightbox(image.currentSrc || link.href, image.alt);
+    };
     const image = document.createElement("img");
     image.alt = "Photo " + (i + 1);
     image.loading = "lazy"; image.decoding = "async";
-    image.src = "/api/photo?id=" + encodeURIComponent(photo.id);
+    // Kakao's thumbnail is tiny and blurs when scaled to the gallery width, so show the original;
+    // fall back to the thumbnail only if the original can't be loaded.
+    const preview = "/api/photo?id=" + encodeURIComponent(photo.id);
+    image.src = link.href;
     image.onerror = function() {
+      if (!image.dataset.fallback) { image.dataset.fallback = "1"; image.src = preview; return; }
       const error = document.createElement("span");
       error.className = "photo-unavailable";
       error.textContent = "Photo unavailable · try KakaoTalk";
