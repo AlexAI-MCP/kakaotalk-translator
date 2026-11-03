@@ -164,3 +164,36 @@ test("the API engine translates fictional demo messages and discards cancelled m
     await viewer?.stop(); await provider.stop(); await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test("auto-start holds off-device translation until released, and manual start does not", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kakao-api-hold-"));
+  const provider = await mockProvider();
+  let viewer;
+  try {
+    viewer = await startViewer(directory, true);
+    await viewer.post("/api/provider", { baseUrl: provider.baseUrl, model: "Qwen3-8B" });
+    await viewer.post("/api/config", { agent: "api" });
+    const started = await (await viewer.post("/api/start", { auto: true })).json();
+    assert.equal(started.translationHeld, true);
+    await waitFor(async () => (await viewer.get("/api/messages")).messages.length >= 2);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(provider.requests.some((request) => request.body?.model), false, "held translation must not reach the API");
+    const held = await viewer.get("/api/messages");
+    assert.ok(held.messages.some((m) => m.tstate === "pending"));
+    assert.equal((await (await viewer.post("/api/translation/resume", {})).json()).translationHeld, false);
+    await waitFor(async () => (await viewer.get("/api/messages")).messages.some((m) => m.tstate === "done"));
+    await viewer.post("/api/stop", {});
+    // Choosing an engine releases the hold too, and a manual start never holds.
+    assert.equal((await (await viewer.post("/api/start", { auto: true })).json()).translationHeld, true);
+    assert.equal((await (await viewer.post("/api/config", { agent: "none" })).json()).translationHeld, false);
+    await viewer.post("/api/stop", {});
+    await viewer.post("/api/config", { agent: "api" });
+    assert.equal((await (await viewer.post("/api/start", {})).json()).translationHeld, false);
+    await viewer.post("/api/stop", {});
+    // On-device and sample engines are never held.
+    await viewer.post("/api/config", { agent: "demo" });
+    assert.equal((await (await viewer.post("/api/start", { auto: true })).json()).translationHeld, false);
+  } finally {
+    await viewer?.stop(); await provider.stop(); await fs.rm(directory, { recursive: true, force: true });
+  }
+});

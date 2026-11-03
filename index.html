@@ -110,6 +110,8 @@ input::placeholder { color:var(--muted); }
 .lightbox[open] { display:grid; place-items:center; }
 .lightbox::backdrop { background:rgba(0,0,0,.85); }
 .lightbox img { display:block; max-width:100%; max-height:calc(100dvh - 48px); object-fit:contain; cursor:default; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+.translation-held { margin-top:10px; padding:10px 12px; border-left:3px solid var(--accent); background:var(--soft); font-size:12px; }
+.translation-held p { margin:0 0 8px; color:var(--muted); }
 .photo-unavailable { padding:12px; color:var(--muted); font-size:12px; border:1px solid var(--line); }
 .tr { padding:12px 0 0 13px; margin-top:13px; border-left:2px solid var(--accent); }
 .tr-label { color:var(--accent); display:block; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-bottom:5px; }
@@ -199,6 +201,8 @@ a { color:inherit; }
     </select></div>
     <div class="field"><label for="target">Translate to</label><select id="target"><option value="en">English</option><option value="ko">Korean</option></select></div>
     <p class="help" id="translation-hint">Choose an engine to enable translation.</p>
+    <div id="translation-held" class="translation-held" role="status" hidden><p id="translation-held-text"></p>
+      <button id="resume-translation" class="secondary" type="button">Translate now</button></div>
     <div id="apple-setup" class="apple-setup" role="status" hidden><p id="apple-setup-text"></p>
       <button id="apple-install" class="secondary" type="button">Download Korean for on-device translation</button>
       <button id="apple-settings" class="link-button" type="button">Open Language &amp; Region settings</button></div>
@@ -234,7 +238,7 @@ a { color:inherit; }
     <div class="empty-symbol" aria-hidden="true">↳</div>
     <h3>Your conversation starts here.</h3>
     <p>Select a chat to read messages and follow the conversation in another language.</p>
-    <ol><li>Open KakaoTalk and sign in on this Mac.</li><li>Browse your chats or enter a room name.</li><li>Choose translation, then start reading.</li></ol>
+    <ol><li>Open KakaoTalk and sign in on this Mac.</li><li>Browse your chats and pick a room.</li><li>Reading starts automatically and resumes next time.</li></ol>
   </div>
   <div id="list-msgs" role="log" aria-label="Messages"></div>
   </div>
@@ -339,6 +343,7 @@ function render(message) {
     nodes.set(message.id,el); $("list-msgs").appendChild(el);
     el.querySelector(".message-index").textContent = String(nodes.size).padStart(3,"0");
   }
+  el.message = message;
   el.querySelector(".author").textContent = message.author;
   el.querySelector(".time").textContent = fmtTime(message.sentAt);
   if (message.sentAt) el.querySelector(".time").dateTime = message.sentAt;
@@ -348,13 +353,21 @@ function render(message) {
   tr.hidden = message.tstate === "skip";
   tr.className = "tr " + (message.tstate === "done" ? "" : message.tstate);
   const language = lastState && lastState.target === "ko" ? "Korean" : "English";
+  const held = message.tstate === "pending" && lastState && lastState.translationHeld;
   tr.querySelector(".tr-label").textContent = message.tstate === "done"
     ? language + (message.truncated ? " · first 2,000 characters" : "")
-    : message.tstate === "pending" ? "Translation queued" : "Translation unavailable";
-  setLinkedText(tr.querySelector(".translation-text"), message.tstate === "done" ? message.translation : message.tstate === "pending" ? "Translating…" : "Check your engine and sign-in status.");
+    : held ? "Translation paused" : message.tstate === "pending" ? "Translation queued" : "Translation unavailable";
+  setLinkedText(tr.querySelector(".translation-text"), message.tstate === "done" ? message.translation
+    : held ? "Not sent yet. Click Translate now to translate." : message.tstate === "pending" ? "Translating…" : "Check your engine and sign-in status.");
 }
 function applyState(state) {
+  const heldChanged = !!(lastState && lastState.translationHeld) !== !!state.translationHeld;
   lastState = state; running = state.running;
+  if (heldChanged) for (const el of nodes.values()) if (el.message && el.message.tstate === "pending") render(el.message);
+  const held = running && state.translationHeld;
+  $("translation-held").hidden = !held;
+  if (held) $("translation-held-text").textContent = "Reading started automatically. Translation is paused so nothing is sent to "
+    + (state.agent === "api" ? "your API" : state.agent === "codex" ? "Codex" : "Claude") + " until you choose.";
   $("toggle-label").textContent = running ? "Stop reading" : "Start reading";
   $("toggle").className = "primary" + (running ? " stop" : "");
   $("toggle").disabled = !running && !state.demo && !$("chat").value.trim();
@@ -407,7 +420,20 @@ function applyState(state) {
     $("empty").querySelector("ol").hidden=true;
   }
 }
-let ticking = false;
+let ticking = false, autoStartDone = false, nextTick = 0;
+// Open straight into reading: start a saved room, or open the room picker on first run. Cloud engines
+// start with translation held (server side) so opening the app never spends provider usage by itself.
+async function autoStart(state) {
+  autoStartDone = true;
+  const a = state.available || {};
+  if (state.running || (!state.demo && (a.platform !== "darwin" || !a.kakaocli))) return false;
+  if (state.demo || state.chat || state.chatId) {
+    try { applyState(await api("/api/start", { auto: true })); return true; } catch(e) { showError(e.message); return false; }
+  }
+  if (window.matchMedia("(max-width:760px)").matches) { $("workspace-controls").classList.add("mobile-open"); $("settings-toggle").setAttribute("aria-expanded","true"); }
+  $("browse").click();
+  return false;
+}
 async function tick() {
   if (ticking) return;
   ticking=true;
@@ -415,12 +441,13 @@ async function tick() {
     let data = await api("/api/messages?after=" + after);
     if (stream && stream !== data.state.streamId) { clearMessages(); data = await api("/api/messages?after=0"); }
     stream=data.state.streamId; applyState(data.state);
+    if (!autoStartDone && await autoStart(data.state)) nextTick = 1000;
     for (const m of data.messages) { render(m);after=Math.max(after,m.seq); }
     if (data.messages.length) $("empty").hidden=true;
     while (nodes.size > (data.state.limit || 500)) { const id=nodes.keys().next().value;nodes.get(id).remove();nodes.delete(id); }
     if (data.messages.length && stickBottom) $("conversation").scrollTop=$("conversation").scrollHeight;
   } catch { showError("Cannot connect to the local server. Start it with npm start, then refresh this page."); $("run").textContent="Disconnected";$("connection").className=""; }
-  finally { ticking=false;clearTimeout(timer);timer=setTimeout(tick,Number($("interval").value||4)*1000); }
+  finally { ticking=false;clearTimeout(timer);timer=setTimeout(tick,nextTick||Number($("interval").value||4)*1000);nextTick=0; }
 }
 async function saveConfig() {
   const data = await api("/api/config",{chat:$("chat").value,chatId:selectedChatId,agent:$("agent").value,target:$("target").value,intervalSec:Number($("interval").value)});
@@ -437,6 +464,9 @@ $("chat").onchange = async function() { try { await saveConfig();await tick(); }
 for (const id of ["agent","target","interval"]) $(id).onchange = async function() {
   try { await saveConfig();await tick(); }
   catch(e) { if (lastState) { $("agent").value=lastState.agent;$("target").value=lastState.target; } showError(e.message); }
+};
+$("resume-translation").onclick = async function() {
+  try { applyState(await api("/api/translation/resume",{})); } catch(e) { showError(e.message); }
 };
 $("apple-install").onclick = async function() {
   $("apple-install").disabled=true;
@@ -490,7 +520,7 @@ $("browse").onclick = async function() {
       button.append(name,meta);
       button.onclick=async function() {
         $("chat").value=chat.display_name;selectedChatId=/^\d+$/.test(chat.id)?chat.id:null;closeChatPicker();
-        try { await saveConfig();await tick(); if(window.matchMedia("(max-width:760px)").matches){$("workspace-controls").classList.remove("mobile-open");$("settings-toggle").setAttribute("aria-expanded","false");} } catch(e) { showError(e.message); }
+        try { await saveConfig(); if (!running) applyState(await api("/api/start",{})); await tick(); if(window.matchMedia("(max-width:760px)").matches){$("workspace-controls").classList.remove("mobile-open");$("settings-toggle").setAttribute("aria-expanded","false");} } catch(e) { showError(e.message); }
       };
       $("chats").appendChild(button);
     }
