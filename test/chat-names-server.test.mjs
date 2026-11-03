@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import net from "node:net";
+import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
@@ -72,6 +73,61 @@ test("room labels use the selected engine, stay English and preserve room select
     child.kill("SIGTERM");
     await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2500))]);
     if (child.exitCode === null) child.kill("SIGKILL");
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("room labels use the configured API engine with room-name instructions", { skip: process.platform !== "darwin" }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "chat-labels-api-"));
+  const requests = [];
+  const provider = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    requests.push({ route: req.url, body: JSON.parse(body || "null") });
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: '["Study Group"]' } }] }));
+  });
+  provider.listen(0, "127.0.0.1");
+  await once(provider, "listening");
+  const probe = net.createServer();
+  probe.listen(0, "127.0.0.1");
+  await once(probe, "listening");
+  const port = probe.address().port;
+  await new Promise((resolve) => probe.close(resolve));
+  const reader = path.join(directory, "reader");
+  fs.writeFileSync(reader, `#!${process.execPath}\nconsole.log(JSON.stringify([{id:"999999999999999999",display_name:"공부 모임",member_count:4}]));`, { mode: 0o700 });
+  const apiSettings = path.join(directory, "api-provider.local.json");
+  fs.writeFileSync(apiSettings, JSON.stringify({ baseUrl: `http://127.0.0.1:${provider.address().port}/v1`, model: "sample-model" }), { mode: 0o600 });
+  const child = spawn(process.execPath, ["server.mjs", "--no-open"], {
+    cwd: new URL("../", import.meta.url),
+    env: { ...process.env, KAKAOCLI: reader, KAKAO_LIVE_PORT: String(port), KAKAO_LIVE_AGENT: "api",
+      KAKAO_LIVE_SETTINGS_PATH: path.join(directory, "settings.json"), KAKAO_LIVE_API_SETTINGS_PATH: apiSettings },
+    stdio: "ignore",
+  });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 60; i++) {
+      try { if ((await fetch(base + "/api/state")).ok) break; } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const id = "999999999999999999";
+    await fetch(base + "/api/chats");
+    const response = await fetch(base + "/api/chat-names", { method: "POST",
+      headers: { "X-Kakao-Live": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ids: [id] }) });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).chats, [{ id, english_name: "Study Group" }]);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].route, "/v1/chat/completions");
+    assert.match(requests[0].body.messages[0].content, /chatroom title/);
+    assert.match(requests[0].body.messages[0].content, /Transliterate Korean personal names/);
+    assert.deepEqual(JSON.parse(requests[0].body.messages[1].content.replace(/^Input JSON:\n/, "")), ["공부 모임"]);
+  } finally {
+    const exited = once(child, "exit");
+    child.kill("SIGTERM");
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2500))]);
+    if (child.exitCode === null) child.kill("SIGKILL");
+    provider.closeAllConnections();
+    await new Promise((resolve) => provider.close(resolve));
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

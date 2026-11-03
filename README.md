@@ -1,12 +1,12 @@
 # KakaoTalk Translator
 
-A local, read-only KakaoTalk conversation viewer with optional Korean–English translation. English interface, Swiss-inspired typography and grid, and Light, Dark and System themes. The settings and status panels stay fixed; only the conversation pane scrolls. Small screens use a Settings drawer.
+A local, read-only KakaoTalk conversation viewer with optional Korean–English translation through a CLI or an OpenAI-compatible API. English interface, Swiss-inspired typography and grid, and Light, Dark and System themes. The controls and status panels stay fixed; only the conversation pane scrolls. Small screens use a Controls drawer. API connections and model selection have a dedicated settings page.
 
 This is an unofficial project, not affiliated with Kakao. Use only conversations you are authorized to access. Respect participant privacy and the applicable service terms.
 
 ## Does sharing this link automatically connect an LLM?
 
-No. This repository provides code, not a hosted service or an AI account. Each user must run it on their own Mac, sign in to their own KakaoTalk, and install/sign in to a supported Claude Code or Codex CLI themselves. The viewer detects compatible installed CLIs, but translation stays off until the user selects an engine. A ChatGPT/Claude browser login alone is not a CLI login.
+No. This repository provides code, not a hosted service or an AI account. Each user must run it on their own Mac and sign in to their own KakaoTalk. For translation, configure a local or hosted compatible API, or install/sign in to a supported Claude Code or Codex CLI. Translation stays off until the user selects an engine. A ChatGPT/Claude browser login alone is not a CLI login or an API key.
 
 If using a coding assistant, paste the repository link together with this setup request:
 
@@ -20,7 +20,7 @@ Requires Node.js 18 or later. There are no runtime dependencies and no npm insta
 npm run demo
 ~~~
 
-Open http://127.0.0.1:8777/. Click Start reading. All demo messages and translations are fictional, prewritten samples; no KakaoTalk database or AI provider is used.
+Open http://127.0.0.1:8777/. Click Start reading. Demo messages and default translations are fictional, prewritten samples; no KakaoTalk database or AI provider is used by default. You can explicitly select an API engine to translate fictional demo messages with your model. API settings in demo mode stay in memory.
 
 ## Set up your own Mac
 
@@ -55,7 +55,7 @@ Photo posts, including albums, show thumbnails when the local database contains 
 
 ## Translation
 
-Translation is off by default. Choose an installed, already-authenticated Claude Code or Codex CLI, then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
+Translation is off by default. Choose a configured API or an installed, already-authenticated Claude Code or Codex CLI, then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
 
 - English translates messages containing Korean characters.
 - Korean translates letter-containing messages without Korean characters.
@@ -63,7 +63,97 @@ Translation is off by default. Choose an installed, already-authenticated Claude
 - Existing messages can be queued when the language or engine changes. Turning translation off does not erase completed translations.
 - Claude uses safe mode, disabled tools/hooks, strict MCP configuration and non-persistent sessions. Codex uses ephemeral sessions, disabled hooks and a read-only sandbox. Incompatible CLI versions are disabled.
 
-Enabling translation sends selected message text to the provider authenticated in your CLI and can consume subscription usage. Provider-side retention policies still apply. Claude translation has been exercised on the development Mac. Codex CLI flag support has been checked, but its provider translation has not been end-to-end verified here.
+Enabling translation sends selected message text to your configured API or the provider authenticated in your CLI and can consume API or subscription usage. Provider-side retention policies still apply. Claude translation has been exercised on the development Mac. Codex CLI flag support has been checked, but its provider translation has not been end-to-end verified here.
+
+## OpenAI-compatible API settings
+
+Open **API settings** in the viewer, or visit http://127.0.0.1:8777/settings.
+
+1. Enter the API base URL, including its prefix. For oMLX, use `http://127.0.0.1:8000/v1`; for OpenAI, use `https://api.openai.com/v1`. Other compatible local servers and gateways work with the same endpoints.
+2. Enter an API key if the server requires one. Local servers may also require authentication.
+3. Click **Load models** to query `GET /models`, then select a chat model. You can enter a model ID manually if discovery is unavailable. A server's list may include non-chat models.
+4. Choose **Automatic** prompting or a manual profile. The preview shows the exact request for a fictional sample.
+5. Click **Test translation** to check connectivity and the translation array format with a fictional Korean sentence. Hosted APIs can charge for this request.
+6. Save, return to the conversation, and choose **OpenAI-compatible API** to enable translation. Saving settings alone does not select that engine.
+
+The app uses non-streaming `POST /chat/completions` with standard message roles. It does not require a provider-specific JSON-schema mode, tool calls, or SDK. Results must contain one translated string per input; malformed or truncated batches are marked unavailable. Redirects are rejected. Requests time out after 90 seconds and responses are limited to 2 MiB. Stopping reading or changing translation settings cancels active API translations and discards outdated results.
+
+API settings, including the optional key, are stored separately in ignored `api-provider.local.json` with owner-only permissions. This is a local plaintext file, not an encrypted credential store. The key is never returned to the browser or written to diagnostics. Leaving the key field blank preserves a saved key only for the same API URL; changing the URL clears the key association. Use **Remove the saved API key** to clear it.
+
+Model profiles follow documented role and prompting differences:
+
+- **Qwen:** separate system and user messages. Original Qwen3 hybrid IDs request non-thinking with `/no_think` and Qwen's recommended non-thinking sampling values. Other Qwen variants keep server defaults; thinking-only and later variants are not forced into hybrid mode. The soft switch depends on the serving template.
+- **Gemma 1–3 / 3n:** instructions go in the user message. **Gemma 4:** uses a system message.
+- **GPT / OpenAI reasoning:** concise instructions with no chain-of-thought request. Modern models use developer messages; older GPT models use system messages and legacy o1-mini/preview use a user message. Sampling parameters are omitted.
+- **General chat model:** system and user messages with server defaults.
+
+Automatic detection uses model names and is a heuristic. Overrides support aliases and custom fine-tunes. The API server applies the model's actual chat template; the app never inserts tokenizer control tokens. Profiles provide a starting point, not a guarantee of translation quality across every model or quantization.
+
+Official guidance checked October 16, 2026:
+
+| Profile | Source and implemented behavior |
+| --- | --- |
+| Qwen3 original hybrid | [Qwen quickstart](https://qwen.readthedocs.io/en/latest/getting_started/quickstart.html): `/no_think` soft switch, temperature 0.7, top_p 0.8 for non-thinking requests. |
+| Qwen3 Instruct-2507 | [Qwen's model card](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507): temperature 0.7, top_p 0.8; no thinking switch because this variant is non-thinking. |
+| Gemma 1–3 / 3n | [Google formatting guidance](https://ai.google.dev/gemma/docs/core/prompt-structure): instructions inside the user message. |
+| Gemma 4 | [Google Gemma 4 formatting](https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4): system role supported; the server handles tokenizer formatting and thinking controls. |
+| GPT / OpenAI reasoning | [OpenAI reasoning guidance](https://developers.openai.com/api/docs/guides/reasoning-best-practices): concise instructions, separate data, no requested chain of thought, developer role for supported model generations. Older model roles are handled separately. |
+| Claude | [Anthropic prompting guidance](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices): translator role, clear output constraints with parser context, and XML-delimited input JSON. No assistant prefill. Native API and Claude CLI evals use this profile; the CLI receives instructions and data together through stdin. |
+
+The translation wording is our task-specific implementation, not a vendor-provided optimal translation prompt. Vendor guidance does not establish a universally best Korean-English prompt. The generic Qwen fallback (including later generations and Thinking-2507) preserves server defaults; it is not a model-specific tuning claim. Exact aliases, fine-tunes, and quantizations need evals.
+
+Qwen also recommends top_k=20 and min_p=0 for the two tuned profiles. These are server-specific extensions, so this portable client leaves them to server configuration rather than assuming every compatible endpoint accepts them. Output budgets and hard thinking switches likewise depend on the server. The app requests JSON using instructions and validates the result; it does not yet use provider-specific structured-output constraints. Few-shot examples and reasoning settings should be evaluated before introducing them into the translation prompt.
+
+## Compare translation models
+
+The simple eval uses 16 fictional Korean ↔ English chat messages covering tone, politeness, idioms, ambiguity, negation, code, URLs, details, and instructions that must be translated as text. No KakaoTalk database or real conversations are read. The runner reuses the viewer's API prompt profiles and CLI translation prompt.
+
+For local models, it reads your API settings without changing them:
+
+```sh
+npm run eval -- --models Qwen3-4B-Instruct-2507-4bit,gemma-4-e2b-it-4bit
+```
+
+Models must already be available on the selected server. You can use any configured compatible API or choose an endpoint explicitly. Keys belong in the environment or private settings, not command arguments:
+
+```sh
+# Use an existing OPENAI_API_KEY environment variable.
+npm run eval -- --base-url https://api.openai.com/v1 --api-key-env OPENAI_API_KEY --models YOUR_GPT_MODEL
+
+# Native Anthropic API; uses an existing ANTHROPIC_API_KEY environment variable.
+npm run eval -- --provider anthropic --models YOUR_CLAUDE_MODEL
+
+# Already-authenticated CLI providers.
+npm run eval -- --provider claude --models YOUR_CLAUDE_MODEL
+npm run eval -- --provider codex --models YOUR_CODEX_MODEL
+```
+
+Hosted API and CLI evals can consume paid usage. Runs are sequential, with four messages per request by default. `--batch-size` supports 1–12 messages and `--repeat` supports 1–10 repetitions. Use the same dataset, batch size, repeat count, and prompt configuration when comparing models. Native Anthropic uses the Claude prompt profile with its `/messages` schema. CLI default model identity is unverified unless you explicitly pass a model.
+
+Each run writes private JSON results and a standalone HTML review report in ignored `artifacts/evals/`. The report includes:
+
+- Mechanical checks for complete translation arrays, nonempty output, target script, preserved identifiers/URLs/code/emoji, and line breaks. These checks are **not translation-quality scores**.
+- Batch latency, prompt hashes, requested/reported models, prompt profiles, and token counts when the provider returns them. Latency includes cold model loads, network time, and CLI startup; small p50/p95 samples are noisy. Prices are not inferred.
+- Blind review cards for rating meaning, naturalness, and tone from 1–5, plus an export button for saving ratings. Model identities can be revealed after review. The illustrative references are not exclusive correct answers and have not been expert-certified.
+
+Open the HTML file printed by the runner. Ratings remain in page memory until exported; reopening the report resets them. Only fully rated outputs contribute to the displayed human average. Compare equal review coverage before choosing a model. One run is a smoke benchmark, not proof of a universal best model.
+
+To compare results from separate providers, keep the run settings identical and merge their JSON files:
+
+```sh
+npm run eval -- --compare artifacts/evals/local.json artifacts/evals/claude.json --out artifacts/evals/comparison
+```
+
+Use `--out artifacts/evals/local` to name a run, or use the automatically generated unique prefix. Existing files at an explicitly selected prefix are replaced. A run with failed mechanical checks still writes its reports and exits with status 1 so those failures remain visible.
+
+```sh
+# Exercise the runner/report without model calls or credentials.
+npm run eval -- --dry-run
+
+npm run eval -- --help
+```
+
+Methodology: task-specific examples, mechanical checks, and human review follow [OpenAI evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices). No hosted eval service or LLM judge is required.
 
 ## Privacy and local configuration
 
@@ -79,11 +169,12 @@ settings.example.json is a non-personal template. Local settings, environment fi
 |---|---|---|
 | KAKAO_LIVE_PORT | 8777 | Local HTTP port |
 | KAKAO_LIVE_CHAT | Empty | Initial room name or unique substring |
-| KAKAO_LIVE_AGENT | none | none, claude or codex |
+| KAKAO_LIVE_AGENT | none | none, claude, codex or api |
 | KAKAO_LIVE_TARGET | en | en or ko |
 | KAKAOCLI | kakaocli | Executable name or path |
 | KAKAO_LIVE_CLAUDE_MODEL | Unset | Optional, explicitly selected Claude model |
 | KAKAO_LIVE_SETTINGS_PATH | settings.local.json | Local preference file |
+| KAKAO_LIVE_API_SETTINGS_PATH | api-provider.local.json | Private API connection and key file |
 
 ~~~sh
 KAKAO_LIVE_CHAT="Your room name" node server.mjs

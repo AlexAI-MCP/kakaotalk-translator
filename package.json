@@ -14,7 +14,8 @@
     "repair:kakaocli": "bash scripts/repair-kakaocli.sh",
     "test": "node --test test/*.test.mjs",
     "test:reader": "bash scripts/test-kakaocli.sh",
-    "check": "node --check server.mjs && node --check lib/messages.mjs && node --check lib/chat-names.mjs && node --check lib/photos.mjs && node --check lib/runtime.mjs && node --check scripts/doctor.mjs && node --check scripts/release-audit.mjs",
+    "eval": "node scripts/eval.mjs",
+    "check": "node --check server.mjs && node --check lib/messages.mjs && node --check lib/chat-names.mjs && node --check lib/photos.mjs && node --check lib/runtime.mjs && node --check lib/api-provider.mjs && node --check lib/translation-prompts.mjs && node --check lib/eval-providers.mjs && node --check lib/translation-eval.mjs && node --check scripts/eval.mjs && node --check scripts/doctor.mjs && node --check scripts/release-audit.mjs",
     "release:check": "node scripts/release-audit.mjs"
   }
 }

@@ -160,7 +160,7 @@ a { color:inherit; }
 <header>
   <div class="topline">
     <div class="brand"><span class="brand-mark" aria-hidden="true">K</span><span>KAKAO / TRANSLATOR</span></div>
-    <div class="top-meta"><button id="settings-toggle" class="secondary" type="button" aria-expanded="false" aria-controls="workspace-controls">Settings</button><span id="mode" class="badge">Local · read-only</span><span id="connection"><span class="dot"></span><span id="run">Connecting</span></span></div>
+    <div class="top-meta"><a href="/settings">API settings</a><button id="settings-toggle" class="secondary" type="button" aria-expanded="false" aria-controls="workspace-controls">Controls</button><span id="mode" class="badge">Local · read-only</span><span id="connection"><span class="dot"></span><span id="run">Connecting</span></span></div>
   </div>
   <div class="hero">
     <div><div class="eyebrow">Conversation, made legible.</div><h1>KakaoTalk Translator</h1></div>
@@ -183,6 +183,7 @@ a { color:inherit; }
       <option value="none">Off — original messages only</option>
       <option value="claude">Claude Code</option>
       <option value="codex">Codex CLI</option>
+      <option value="api">OpenAI-compatible API</option>
     </select></div>
     <div class="field"><label for="target">Translate to</label><select id="target"><option value="en">English</option><option value="ko">Korean</option></select></div>
     <p class="help" id="translation-hint">Choose an engine to enable translation.</p>
@@ -224,7 +225,7 @@ a { color:inherit; }
   </div>
 </main>
 </div>
-<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your own signed-in CLI.</span><span>No tracking · No hosted chat storage</span></footer>
+<footer class="footnote"><span id="privacy-note">Local reader. Translation uses your selected CLI or API.</span><span>No tracking · No hosted chat storage</span></footer>
 </div>
 <script>
 const $ = function(id) { return document.getElementById(id); };
@@ -318,12 +319,14 @@ function applyState(state) {
   if (state.demo && !sampleOption) { const opt = document.createElement("option"); opt.value="demo";opt.textContent="Sample translations (demo)";$("agent").appendChild(opt); }
   $("agent").querySelector('option[value="claude"]').disabled = !a.claudeCompatible;
   $("agent").querySelector('option[value="codex"]').disabled = !a.codexCompatible;
+  $("agent").querySelector('option[value="api"]').disabled = !a.apiConfigured;
   if (!initialized) {
     $("chat").value = state.chat; selectedChatId = state.chatId; $("agent").value=state.agent; $("target").value=state.target; $("interval").value=String(state.intervalSec); initialized=true;
     $("toggle").disabled = !running && !state.demo && !state.chat;
   }
   $("translation-hint").textContent = state.agent === "none" ? "Original messages only. No text is sent to an AI provider."
     : state.agent === "demo" ? "Fictional messages and prewritten sample translations. No AI calls."
+    : state.agent === "api" ? (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ") + "Sends text to your configured API · " + a.apiModel
     : (state.target === "en" ? "Korean messages → English. " : "Messages without Korean text → Korean. ") + "Sends text to your signed-in provider.";
   $("session-note").textContent = state.demo ? "Demo mode does not read KakaoTalk or save chat preferences." : "Preferences stay on this computer. Messages stay in memory.";
   if (state.demo) {
