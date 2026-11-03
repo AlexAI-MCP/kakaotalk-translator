@@ -128,3 +128,18 @@ test("provider errors are sanitized, response sizes bounded, and cancellation su
     await new Promise((resolve, reject) => options.signal.addEventListener("abort", () => reject(new Error("fixture")), { once: true }));
   } }), /timed out/);
 });
+
+test("room-name prompts transliterate names and leave message prompts unchanged", () => {
+  for (const model of ["sample-model", "gemma-3-4b-it", "claude-sample"]) {
+    const config = validateApiConfig({ model });
+    const messages = buildTranslationRequest(config, ["공부 모임"], "en");
+    assert.deepEqual(buildTranslationRequest(config, ["공부 모임"], "en", "messages"), messages);
+    const rooms = buildTranslationRequest(config, ["공부 모임"], "en", "room-names");
+    const instructions = rooms.messages[0].content;
+    assert.match(instructions, /chatroom title/);
+    assert.match(instructions, /Transliterate Korean personal names into Latin letters/);
+    assert.doesNotMatch(instructions, /politeness, names/);
+    assert.equal(rooms.messages.length, messages.messages.length, "profile roles are preserved");
+    assert.doesNotMatch(messages.messages[0].content, /Transliterate/);
+  }
+});
