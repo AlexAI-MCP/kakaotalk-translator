@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { parseCliJson, parseMessages, needsTranslation as translationNeeded } from "./lib/messages.mjs";
 import { findCommand, cliSupport, readPreferences, cleanPreferences } from "./lib/runtime.mjs";
 import { createChatNameTranslator } from "./lib/chat-names.mjs";
+import { parsePhotos, photoQueries, fetchPhoto } from "./lib/photos.mjs";
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.KAKAO_LIVE_PORT || 8777);
@@ -41,6 +42,7 @@ const state = {
 };
 let seq = 0;
 const messages = new Map(); // key -> message
+const photoSources = new Map(); // opaque photo ID -> provider URLs, memory only
 let timer = null;
 let firstPoll = true;
 let translationGeneration = 0;
@@ -144,6 +146,18 @@ async function resolveAuthors(rows) {
     if (cached) m.author = cached.name;
   }
 }
+async function resolvePhotos(rows) {
+  const pending = rows.filter((m) => !messages.has(`${m.chatId}:${m.logId}`));
+  const attachments = new Map();
+  for (const sql of photoQueries(pending)) {
+    const result = await runCapture(KAKAOCLI, ["query", sql]);
+    if (result.code !== 0) continue;
+    try {
+      for (const row of parseCliJson(result.out)) attachments.set(`${row[0]}:${row[1]}`, parsePhotos(row[2]));
+    } catch { /* Text remains readable when attachment metadata is unsupported. */ }
+  }
+  for (const m of pending) m.photos = attachments.get(`${m.chatId}:${m.logId}`) || [];
+}
 function addMessage(m) {
   const key = m.logId != null ? `${m.chatId}:${m.logId}` : `${m.author}|${m.sentAt}|${m.text}`;
   if (messages.has(key)) {
@@ -158,11 +172,20 @@ function addMessage(m) {
     author: m.author,
     text: m.text,
     sentAt: m.sentAt,
+    photos: (m.photos || []).map((source) => {
+      const id = randomUUID();
+      photoSources.set(id, source);
+      return { id };
+    }),
     translation: null,
     truncated: m.text.length > 2000,
     tstate: state.agent !== "none" && needsTranslation(m.text) ? "pending" : "skip",
   });
-  while (messages.size > MAX_MESSAGES) messages.delete(messages.keys().next().value);
+  while (messages.size > MAX_MESSAGES) {
+    const oldest = messages.keys().next().value;
+    for (const photo of messages.get(oldest).photos) photoSources.delete(photo.id);
+    messages.delete(oldest);
+  }
   return true;
 }
 
@@ -199,6 +222,8 @@ async function pollOnce() {
       firstPoll = false;
       const rows = parseMessages(r.out);
       await resolveAuthors(rows);
+      if (currentStream !== streamId || !state.running) return;
+      await resolvePhotos(rows);
       if (currentStream !== streamId || !state.running) return;
       for (const m of rows.sort((a, b) => String(a.sentAt).localeCompare(String(b.sentAt)))) addMessage(m);
     }
@@ -315,6 +340,16 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/") return send(res, 200, fs.readFileSync(path.join(DIR, "index.html")), "text/html; charset=utf-8");
   if (req.method === "GET" && url.pathname === "/api/state") return send(res, 200, publicState());
+  if (req.method === "GET" && url.pathname === "/api/photo") {
+    const id = url.searchParams.get("id");
+    const source = photoSources.get(id);
+    if (!source) return send(res, 404, { error: "Photo is no longer available in this conversation." });
+    try {
+      const photo = await fetchPhoto(url.searchParams.get("full") === "1" ? source.original : source.preview);
+      if (photoSources.get(id) !== source) return send(res, 404, { error: "Photo is no longer available in this conversation." });
+      return send(res, 200, photo.bytes, photo.type);
+    } catch { return send(res, 502, { error: "Photo unavailable. It may have expired; try opening it in KakaoTalk." }); }
+  }
   if (req.method === "GET" && url.pathname === "/api/messages") {
     const after = Number(url.searchParams.get("after") || 0);
     const rows = [...messages.values()].filter((m) => m.seq > after).map(({ key, ...m }) => ({ id: key, ...m }));
@@ -371,7 +406,7 @@ const server = http.createServer(async (req, res) => {
     if (b.chatId === null) state.chatId = null;
     else if (/^\d{1,20}$/.test(String(b.chatId ?? ""))) state.chatId = String(b.chatId);
     const changedChat = previousChat !== state.chat || previousChatId !== state.chatId;
-    if (changedChat) { messages.clear(); authorNames.clear(); firstPoll = true; streamId = randomUUID(); authorError = null; }
+    if (changedChat) { messages.clear(); photoSources.clear(); authorNames.clear(); firstPoll = true; streamId = randomUUID(); authorError = null; }
     if (typeof b.agent === "string" && AGENT_RE.test(b.agent)) state.agent = b.agent;
     if (b.target === "ko" || b.target === "en") state.target = b.target;
     if (Number.isFinite(b.intervalSec)) state.intervalSec = Math.max(3, Math.min(5, Math.round(b.intervalSec)));

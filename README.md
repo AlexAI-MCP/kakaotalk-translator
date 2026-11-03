@@ -49,6 +49,10 @@ The doctor reports checks without printing room names, messages or credentials. 
 
 Live reading has been checked on macOS 26.5 with Node 22.22.3 and Command Line Tools / Swift 6.3.2. The upstream Swift package targets macOS 14 or later; other Mac versions and database revisions still need their own verification. Non-Mac systems can use the demo, not live database reading.
 
+## Photos
+
+Photo posts, including albums, show thumbnails when the local database contains valid attachment links. Click a thumbnail to open the full-size image in a new tab. The local server retrieves images from Kakao's image CDN as you view them; images are not sent to an AI provider or saved by the app. Expired or unsupported images show an unavailable notice. Try KakaoTalk if a photo no longer loads. Each image is limited to 20 MiB.
+
 ## Translation
 
 Translation is off by default. Choose an installed, already-authenticated Claude Code or Codex CLI, then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.

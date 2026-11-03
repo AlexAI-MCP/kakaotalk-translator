@@ -96,6 +96,12 @@ input::placeholder { color:var(--muted); }
 .message-index { display:block; font-size:9px; color:var(--muted); margin-top:10px; }
 .text,.translation-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .text { font-size:14px; }
+.photos { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr)); gap:10px; max-width:560px; margin-top:12px; }
+.photos[hidden] { display:none; }
+.photos a { display:block; min-width:0; background:var(--soft); border:1px solid var(--line); }
+.photos a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.photos img { display:block; width:100%; height:180px; object-fit:contain; }
+.photo-unavailable { padding:12px; color:var(--muted); font-size:12px; border:1px solid var(--line); }
 .tr { padding:12px 0 0 13px; margin-top:13px; border-left:2px solid var(--accent); }
 .tr-label { color:var(--accent); display:block; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-bottom:5px; }
 .translation-text { font-size:14px; }
@@ -238,11 +244,36 @@ function fmtTime(value) {
   const date = new Date(value);
   return isNaN(date) ? "" : date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 }
+function renderPhotos(el, message) {
+  const photos = message.photos || [];
+  const gallery = el.querySelector(".photos");
+  if (gallery.dataset.ids === photos.map((photo) => photo.id).join(",")) return;
+  gallery.dataset.ids = photos.map((photo) => photo.id).join(",");
+  gallery.replaceChildren();
+  for (const [i, photo] of photos.entries()) {
+    const link = document.createElement("a");
+    link.href = "/api/photo?id=" + encodeURIComponent(photo.id) + "&full=1";
+    link.target = "_blank"; link.rel = "noopener noreferrer";
+    link.title = "Open full-size photo";
+    const image = document.createElement("img");
+    image.alt = "Photo " + (i + 1);
+    image.loading = "lazy"; image.decoding = "async";
+    image.src = "/api/photo?id=" + encodeURIComponent(photo.id);
+    image.onerror = function() {
+      const error = document.createElement("span");
+      error.className = "photo-unavailable";
+      error.textContent = "Photo unavailable · try KakaoTalk";
+      link.replaceWith(error);
+    };
+    link.appendChild(image); gallery.appendChild(link);
+  }
+  gallery.hidden = !photos.length;
+}
 function render(message) {
   let el = nodes.get(message.id);
   if (!el) {
     el = document.createElement("article"); el.className = "msg";
-    el.innerHTML = '<div class="meta"><span class="author"></span><time class="time"></time><span class="message-index"></span></div><div><div class="text"></div><div class="tr" hidden><span class="tr-label"></span><div class="translation-text"></div></div></div>';
+    el.innerHTML = '<div class="meta"><span class="author"></span><time class="time"></time><span class="message-index"></span></div><div><div class="text"></div><div class="photos" hidden></div><div class="tr" hidden><span class="tr-label"></span><div class="translation-text"></div></div></div>';
     nodes.set(message.id,el); $("list-msgs").appendChild(el);
     el.querySelector(".message-index").textContent = String(nodes.size).padStart(3,"0");
   }
@@ -250,6 +281,7 @@ function render(message) {
   el.querySelector(".time").textContent = fmtTime(message.sentAt);
   if (message.sentAt) el.querySelector(".time").dateTime = message.sentAt;
   el.querySelector(".text").textContent = message.text;
+  renderPhotos(el, message);
   const tr = el.querySelector(".tr");
   tr.hidden = message.tstate === "skip";
   tr.className = "tr " + (message.tstate === "done" ? "" : message.tstate);
