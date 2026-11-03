@@ -1,0 +1,90 @@
+diff --git a/Sources/KakaoCore/Database/DatabaseReader.swift b/Sources/KakaoCore/Database/DatabaseReader.swift
+index bc58a93..cedae24 100644
+--- a/Sources/KakaoCore/Database/DatabaseReader.swift
++++ b/Sources/KakaoCore/Database/DatabaseReader.swift
+@@ -88,30 +88,64 @@ public final class DatabaseReader: @unchecked Sendable {
+         let sql = """
+             SELECT r.chatId, r.type, r.chatName, r.activeMembersCount,
+                    r.lastLogId, r.lastUpdatedAt, r.countOfNewMessage,
+-                   u.displayName, u.friendNickName, u.nickName
++                   u.displayName, u.friendNickName, u.nickName,
++                   o.linkName, r.displayMemberIds, r.linkId
+             FROM NTChatRoom r
+             LEFT JOIN NTUser u ON r.directChatMemberUserId = u.userId AND u.linkId = 0
++            LEFT JOIN NTOpenLink o ON r.linkId = o.linkId
+             ORDER BY r.lastUpdatedAt DESC
+             LIMIT ?
+             """
+-        return try query(sql, bind: [.int(limit)]) { row in
+-            // For direct chats, use the friend's name; for groups, use chatName
+-            let chatName = row.string(2)
+-            let displayName = row.string(7) ?? row.string(8) ?? row.string(9)
+-            let name = chatName ?? displayName ?? "(unknown)"
+-
+-            return Chat(
++        let rows = try query(sql, bind: [.int(limit)]) { row in
++            let name = [2, 10, 7, 8, 9].compactMap { Self.nonempty(row.string(Int32($0))) }.first
++            // KakaoTalk stores displayMemberIds as a binary property-list array.
++            let members = row.data(11).flatMap {
++                (try? PropertyListSerialization.propertyList(from: $0, format: nil)) as? [Int64]
++            } ?? []
++
++            let chat = Chat(
+                 id: row.int64(0),
+                 type: Chat.ChatType.from(rawInt: row.int(1)),
+-                displayName: name,
++                displayName: name ?? "Unnamed chat",
+                 memberCount: row.int(3),
+                 lastMessageId: row.optionalInt64(4),
+                 lastMessageAt: row.optionalKakaoDate(5),
+                 unreadCount: row.int(6)
+             )
++            return (chat: chat, name: name, members: members.filter { $0 > 0 }, linkId: row.int64(12))
++        }
++        let unnamed = rows.filter { $0.name == nil && !$0.members.isEmpty }
++        let memberIds = Set(unnamed.flatMap(\.members)).sorted()
++        var names: [String: String] = [:]
++        if !memberIds.isEmpty {
++            let links = Set(unnamed.map(\.linkId)).sorted()
++            let placeholders = { (count: Int) in Array(repeating: "?", count: count).joined(separator: ",") }
++            let users = try query("""
++                SELECT userId, linkId, displayName, friendNickName, nickName FROM NTUser
++                WHERE userId IN (\(placeholders(memberIds.count))) AND linkId IN (\(placeholders(links.count)))
++                """, bind: memberIds.map { .int64($0) } + links.map { .int64($0) }) { row in
++                (key: "\(row.int64(1)):\(row.int64(0))",
++                 name: [2, 3, 4].compactMap { Self.nonempty(row.string(Int32($0))) }.first)
++            }
++            for user in users { names[user.key] = user.name }
++        }
++        return rows.map { row in
++            guard row.name == nil else { return row.chat }
++            let participants = row.members.compactMap { names["\(row.linkId):\($0)"] }
++            guard !participants.isEmpty else { return row.chat }
++            let name = participants.prefix(3).joined(separator: ", ") + (participants.count > 3 ? ", …" : "")
++            let chat = row.chat
++            return Chat(id: chat.id, type: chat.type, displayName: name, memberCount: chat.memberCount,
++                        lastMessageId: chat.lastMessageId, lastMessageAt: chat.lastMessageAt,
++                        unreadCount: chat.unreadCount)
+         }
+     }
+ 
++    private static func nonempty(_ value: String?) -> String? {
++        guard let name = value?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
++        return name
++    }
++
+     /// Get messages for a chat, optionally filtered by time.
+     public func messages(chatId: Int64? = nil, since: Date? = nil, limit: Int = 50) throws -> [Message] {
+         var conditions: [String] = []
+@@ -341,6 +375,11 @@ public final class DatabaseReader: @unchecked Sendable {
+             return String(cString: ptr)
+         }
+ 
++        func data(_ col: Int32) -> Data? {
++            guard let ptr = sqlite3_column_blob(stmt, col) else { return nil }
++            return Data(bytes: ptr, count: Int(sqlite3_column_bytes(stmt, col)))
++        }
++
+         func bool(_ col: Int32) -> Bool {
+             sqlite3_column_int(stmt, col) != 0
+         }
