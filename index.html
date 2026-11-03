@@ -96,6 +96,12 @@ input::placeholder { color:var(--muted); }
 .message-index { display:block; font-size:9px; color:var(--muted); margin-top:10px; }
 .text,.translation-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .text { font-size:14px; }
+.photos { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr)); gap:10px; max-width:560px; margin-top:12px; }
+.photos[hidden] { display:none; }
+.photos a { display:block; min-width:0; background:var(--soft); border:1px solid var(--line); }
+.photos a:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.photos img { display:block; width:100%; height:180px; object-fit:contain; }
+.photo-unavailable { padding:12px; color:var(--muted); font-size:12px; border:1px solid var(--line); }
 .tr { padding:12px 0 0 13px; margin-top:13px; border-left:2px solid var(--accent); }
 .tr-label { color:var(--accent); display:block; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; margin-bottom:5px; }
 .translation-text { font-size:14px; }
@@ -239,11 +245,36 @@ function fmtTime(value) {
   const date = new Date(value);
   return isNaN(date) ? "" : date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 }
+function renderPhotos(el, message) {
+  const photos = message.photos || [];
+  const gallery = el.querySelector(".photos");
+  if (gallery.dataset.ids === photos.map((photo) => photo.id).join(",")) return;
+  gallery.dataset.ids = photos.map((photo) => photo.id).join(",");
+  gallery.replaceChildren();
+  for (const [i, photo] of photos.entries()) {
+    const link = document.createElement("a");
+    link.href = "/api/photo?id=" + encodeURIComponent(photo.id) + "&full=1";
+    link.target = "_blank"; link.rel = "noopener noreferrer";
+    link.title = "Open full-size photo";
+    const image = document.createElement("img");
+    image.alt = "Photo " + (i + 1);
+    image.loading = "lazy"; image.decoding = "async";
+    image.src = "/api/photo?id=" + encodeURIComponent(photo.id);
+    image.onerror = function() {
+      const error = document.createElement("span");
+      error.className = "photo-unavailable";
+      error.textContent = "Photo unavailable · try KakaoTalk";
+      link.replaceWith(error);
+    };
+    link.appendChild(image); gallery.appendChild(link);
+  }
+  gallery.hidden = !photos.length;
+}
 function render(message) {
   let el = nodes.get(message.id);
   if (!el) {
     el = document.createElement("article"); el.className = "msg";
-    el.innerHTML = '<div class="meta"><span class="author"></span><time class="time"></time><span class="message-index"></span></div><div><div class="text"></div><div class="tr" hidden><span class="tr-label"></span><div class="translation-text"></div></div></div>';
+    el.innerHTML = '<div class="meta"><span class="author"></span><time class="time"></time><span class="message-index"></span></div><div><div class="text"></div><div class="photos" hidden></div><div class="tr" hidden><span class="tr-label"></span><div class="translation-text"></div></div></div>';
     nodes.set(message.id,el); $("list-msgs").appendChild(el);
     el.querySelector(".message-index").textContent = String(nodes.size).padStart(3,"0");
   }
@@ -251,6 +282,7 @@ function render(message) {
   el.querySelector(".time").textContent = fmtTime(message.sentAt);
   if (message.sentAt) el.querySelector(".time").dateTime = message.sentAt;
   el.querySelector(".text").textContent = message.text;
+  renderPhotos(el, message);
   const tr = el.querySelector(".tr");
   tr.hidden = message.tstate === "skip";
   tr.className = "tr " + (message.tstate === "done" ? "" : message.tstate);
@@ -272,9 +304,9 @@ function applyState(state) {
   $("translated").textContent = String(state.translationCounts && state.translationCounts.done || 0).padStart(3,"0");
   $("pending").textContent = String(state.translationCounts && state.translationCounts.pending || 0).padStart(3,"0");
   $("refresh-value").textContent = state.intervalSec;
-  $("room-title").textContent = state.chat || "No chat selected";
+  $("room-title").textContent = state.chat ? displayChatName(state.chat, state.chatEnglishName) : "No chat selected";
   $("updated").textContent = state.lastPollAt ? "Updated " + fmtTime(state.lastPollAt) : "Waiting for first update";
-  showError(state.lastError);
+  showError(state.lastError || chatPickerError);
   const a = state.available || {};
   $("availability").replaceChildren();
   for (const item of [["kakaocli",a.kakaocli],["Claude Code",a.claudeCompatible],["Codex CLI",a.codexCompatible]]) {
@@ -331,22 +363,48 @@ $("toggle").onclick = async function() {
 $("chat").oninput = function() { selectedChatId=null;$("toggle").disabled=!running&&!$("chat").value.trim(); };
 $("chat").onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
 for (const id of ["agent","target","interval"]) $(id).onchange = async function() { try { await saveConfig();await tick(); } catch(e) { showError(e.message); } };
+let chatPickerError = null, chatPickerGeneration = 0;
 function closeChatPicker() {
+  chatPickerGeneration++;
   $("chats").hidden=true;
   $("browse").textContent="Browse your chats ↗";
   $("browse").setAttribute("aria-expanded","false");
   $("chat-status").textContent="";
 }
+function displayChatName(original, english) {
+  return english && english !== original ? original + " (" + english + ")" : original;
+}
+async function translateChatLabels(chats, entries, generation) {
+  if (!lastState || ["none", "demo"].includes(lastState.agent)) return;
+  const ids = chats.filter((chat) => !chat.english_name && /[ㄱ-ㆎ가-힣]/.test(chat.display_name)).map((chat) => chat.id);
+  if (!ids.length) return;
+  const engine = lastState.agent;
+  $("chat-status").textContent = chats.length + " chats · translating English labels…";
+  try {
+    const data = await api("/api/chat-names", { ids: ids });
+    if (generation !== chatPickerGeneration || lastState.agent !== engine) return;
+    for (const chat of data.chats) {
+      const entry = entries.get(chat.id);
+      if (entry) entry.label.textContent = displayChatName(entry.original, chat.english_name);
+    }
+    $("chat-status").textContent = chats.length + " chats · names are local to your account";
+  } catch (error) {
+    if (generation === chatPickerGeneration && lastState.agent === engine) $("chat-status").textContent = error.message;
+  }
+}
 $("browse").onclick = async function() {
   if (!$("chats").hidden) { closeChatPicker();return; }
-  $("chat-status").textContent="Loading chats…";$("browse").disabled=true;
+  chatPickerError=null;showError("");
+  $("chat-status").textContent="Loading chats… This can take up to 20 seconds.";$("browse").textContent="Loading chats…";$("browse").disabled=true;
   try {
     const data=await api("/api/chats");$("chats").replaceChildren();$("chats").hidden=false;
+    const generation = ++chatPickerGeneration, entries = new Map();
     $("browse").textContent="Hide your chats ↑";$("browse").setAttribute("aria-expanded","true");
     $("chat-status").textContent=data.chats.length + " chats · names are local to your account";
     for (const chat of data.chats) {
       const button=document.createElement("button");button.type="button";button.className="chat-option";
-      const name=document.createElement("span");name.textContent=chat.display_name;
+      const name=document.createElement("span");name.textContent=displayChatName(chat.display_name,chat.english_name);
+      entries.set(chat.id, { label: name, original: chat.display_name });
       const meta=document.createElement("small");meta.textContent=(chat.member_count||0) + " participants";
       button.append(name,meta);
       button.onclick=async function() {
@@ -356,8 +414,9 @@ $("browse").onclick = async function() {
       $("chats").appendChild(button);
     }
     if (!data.chats.length) $("chat-status").textContent="No chats found. Open KakaoTalk and check your local account.";
-  } catch(e) { $("chat-status").textContent=e.message; }
-  finally { $("browse").disabled=false; }
+    void translateChatLabels(data.chats, entries, generation);
+  } catch(e) { chatPickerError=e.message;$("chat-status").textContent=e.message;showError(e.message); }
+  finally { $("browse").disabled=false;if ($("chats").hidden) $("browse").textContent="Browse your chats ↗"; }
 };
 document.addEventListener("click",function(event) {
   if (!$("chats").hidden && !event.target.closest("#browse, #chats")) closeChatPicker();

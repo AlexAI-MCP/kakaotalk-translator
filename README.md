@@ -49,6 +49,10 @@ The doctor reports checks without printing room names, messages or credentials. 
 
 Live reading has been checked on macOS 26.5 with Node 22.22.3 and Command Line Tools / Swift 6.3.2. The upstream Swift package targets macOS 14 or later; other Mac versions and database revisions still need their own verification. Non-Mac systems can use the demo, not live database reading.
 
+## Photos
+
+Photo posts, including albums, show thumbnails when the local database contains valid attachment links. Click a thumbnail to open the full-size image in a new tab. The local server retrieves images from Kakao's image CDN as you view them; images are not sent to an AI provider or saved by the app. Expired or unsupported images show an unavailable notice. Try KakaoTalk if a photo no longer loads. Each image is limited to 20 MiB.
+
 ## Translation
 
 Translation is off by default. Choose a configured API or an installed, already-authenticated Claude Code or Codex CLI, then choose English or Korean. CLI installation and sign-in are your responsibility; this app does not switch accounts or copy authentication.
@@ -180,12 +184,17 @@ Use --no-open to prevent automatic browser opening. Stop reading pauses polling;
 
 ## Troubleshooting
 
+The server writes structured diagnostics to its terminal: operation, duration, exit status and timeout or failure category. It never logs command output, message text, room names or credentials. To keep these diagnostics in an ignored local file, run `npm start >> app.local.log 2>&1`; inspect them with `tail -f app.local.log`.
+
 - Connection refused: start the server in the project directory and open the matching port.
+- No messages after restarting the server: room preferences are preserved, but reading starts stopped. Select your room and click Start reading to resume polling. Enable a translation engine separately if needed.
 - Address already in use: stop the previous instance you own or choose another port.
 - Room missing: the selected CLI/database may not expose that room. This is not proof of universal open-chat support.
 - Read error: check KakaoTalk login and manual Full Disk Access approval, then run the doctor.
+- Chat browsing times out or reports “file is not a database”: the pinned reader can time out while detecting newer account IDs. After installing the reader, run `npm run repair:kakaocli`, then restart the viewer. This builds a separate reader with parallel account discovery and a validated local cache, adapted from [upstream PR #20](https://github.com/silver-flight-group/kakaocli/pull/20). The first discovery can take longer; subsequent reads use the cache. The cache lives in `~/.kakaocli/userid.json` with owner-only permissions and contains account metadata, not passwords or message text.
 - Translation unavailable: install/sign in to a compatible provider CLI yourself. No credentials belong in this repository.
-- Unknown room names: the local database may have no room title or contact name to use as a fallback, particularly for group chats. The room picker displays the CLI's result; it cannot reconstruct a missing title. This is separate from an unknown chat-type classification. Do not run harvest or UI automation to populate names.
+- Unknown room names: run `npm run repair:kakaocli`, then restart the viewer and browse your chats again. The repaired reader uses the stored room title, open-chat link title, direct-contact name, then up to three participant names from the room's local member list. Participant names are scoped to the room and may differ from a custom title shown in KakaoTalk. If none are available, it displays "Unnamed chat". This is separate from an unknown chat-type classification. Do not run harvest or UI automation to populate names.
+- English room labels: choose your translation engine and browse your chats. Korean names appear immediately; English translations load beside them as `한국어 이름 (English Name)`, including in the selected room heading. Room names are sent to the selected provider and labels are cached in memory until restart. Original names and room IDs remain the selection values. Translation off keeps the original names only; failed translations do not prevent reading.
 - Name unavailable: room-scoped nicknames may be missing from the local database. Do not use UI automation to populate them.
 
 ## Development and public-repository preparation
@@ -193,8 +202,11 @@ Use --no-open to prevent automatic browser opening. Stop reading pauses polling;
 ~~~sh
 npm run check
 npm test
+npm run test:reader # macOS, Swift 6+, and SQLCipher required
 npm run release:check
 ~~~
+
+Reader tests apply both production patches to the pinned kakaocli revision in a disposable checkout and use synthetic databases. They do not read your KakaoTalk data or replace your installed reader. Set `KAKAOCLI_TEST_SOURCE` to an existing kakaocli source checkout to clone locally.
 
 Tests use fictional fixtures only. The release check is a heuristic privacy audit, not a guarantee: review every staged file before publication. Never include real conversation screenshots, invite links, personal room defaults, account details, credentials or database files.
 
