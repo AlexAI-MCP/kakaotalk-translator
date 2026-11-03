@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const publicPath = /^(server\.mjs|index\.html|README\.md|LICENSE|SECURITY\.md|CONTRIBUTING\.md|package\.json|\.gitignore|settings\.example\.json|lib\/[\w.-]+\.mjs|scripts\/[\w.-]+\.(mjs|sh)|scripts\/kakaocli-account-detection\.patch|test\/[\w./-]+\.(mjs|json)|\.github\/workflows\/[\w.-]+\.yml|docs\/[\w./-]+\.(md|png|svg))$/;
+const publicPath = /^(server\.mjs|index\.html|README\.md|LICENSE|SECURITY\.md|CONTRIBUTING\.md|package\.json|\.gitignore|settings\.example\.json|lib\/[\w.-]+\.mjs|scripts\/[\w.-]+\.(mjs|sh)|scripts\/kakaocli-(account-detection|chat-names)\.patch|test\/[\w./-]+\.(mjs|json)|test\/reader\/ChatNamesTests\.swift|\.github\/workflows\/[\w.-]+\.yml|docs\/[\w./-]+\.(md|png|svg))$/;
 const ignored = /(^|\/)(\.git|node_modules|\.build|\.vendor|artifacts|screenshots|coverage|\.claude|\.codex|\.kakaocli|transcripts|chat-exports)(\/|$)|(^|\/)\.DS_Store$|\.local\.|(^|\/)\.env(?:\.|$)|\.(log|tgz|db|sqlite|jsonl)(?:$|-)/;
 function walk(dir, prefix = "") {
   return fs.readdirSync(dir,{withFileTypes:true}).flatMap((entry) => {
